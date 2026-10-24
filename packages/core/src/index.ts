@@ -10,3 +10,4 @@ export * from './review';
 export * from './billingBoard';
 export * from './safety';
 export * from './speaker';
+export * from './figures';

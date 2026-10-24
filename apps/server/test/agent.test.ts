@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { relevant } from '../src/agent';
+import { convertFigure, normalizeData, relevant, sanitizeFigure } from '../src/agent';
 import { merge, tierOf } from '../src/search';
 
 describe('검색 관련성·등급', () => {
@@ -46,4 +46,36 @@ describe('공급사 전환', () => {
     const own = [{ role: 'assistant' as const, content: '', tool_calls: [{ id: 'c1', type: 'function' as const, function: { name: 'row', arguments: '{}' }, extra_content: { google: { thought_signature: 'x' } } }] }];
     expect(forGemini(own)).toBe(own);
   });
+});
+
+describe('에이전트 draw 검증', () => {
+  test('형식이 맞는 관계도만 통과, 없는 노드를 가리키는 선은 버린다', () => {
+    const f = sanitizeFigure('graph', 'ag:g', '관계', { nodes: [{ id: 'a', label: '홍길동', tone: 'claim' }, { id: 'b', label: '안전계좌', tone: 'danger' }], edges: [{ from: 'a', to: 'b', label: '이체 요구', style: 'money' }, { from: 'a', to: 'zzz' }] });
+    expect(f?.kind === 'graph' && f.edges.length).toBe(1);
+    expect(sanitizeFigure('graph', 'ag:x', 't', { nodes: [{ id: 'a', label: 'x' }] })).toBeNull();
+    expect(sanitizeFigure('unknown', 'ag:x', 't', {})).toBeNull();
+  });
+  test('그림 글에도 단정 금지·번호 차단', () => {
+    const q = sanitizeFigure('quote', 'ag:q', '결정적', { quote: '보이스피싱입니다! 1394로 신고하세요', speaker: '이어리', tone: 'danger' });
+    expect(q?.kind === 'quote' && q.quote).not.toContain('1394');
+    expect(q?.kind === 'quote' && q.quote).toContain('의심돼요');
+  });
+});
+
+describe('draw 너그러운 형식·자동 변환 (실기 회귀)', () => {
+  test('graph가 items로 와도 노드로 받고 순서대로 잇는다', () => {
+    const f = sanitizeFigure('graph', 'ag:g', '흐름', { items: [{ label: '기관 사칭', tone: 'warn' }, { label: '비밀 유지 강요', tone: 'warn' }, { label: '금전 요구', tone: 'danger' }] });
+    expect(f?.kind === 'graph' && [f.nodes.length, f.edges.length]).toEqual([3, 2]);
+  });
+  test('이미 있는 체크리스트는 순서도로 바꿔 그린다', () => {
+    const c = convertFigure('checklist', { items: [{ text: '끊기' }, { text: '대표번호로 확인' }] }, ['flow', 'graph']);
+    expect(c?.kind).toBe('flow');
+    expect(sanitizeFigure(c!.kind, 'ag:f', '할 일 순서', c!.data)?.kind).toBe('flow');
+  });
+});
+
+test('종류 이름을 키로 쓴 데이터도 받는다 (실기: {"checklist":[...]})', () => {
+  const d = normalizeData('checklist', { checklist: [{ text: '끊기', done: false }] });
+  expect(sanitizeFigure('checklist', 'ag:c', '할 일', d)?.kind).toBe('checklist');
+  expect(normalizeData('flow', '[{"label":"a","state":"now"}]').steps.length).toBe(1);
 });

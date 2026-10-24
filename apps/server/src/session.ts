@@ -1,13 +1,13 @@
 // 통화 세션 = 서버가 원본 상태를 갖는 이벤트 로그 + 파이프라인 오케스트레이터. (§6, §7, §8.10, §9)
 // 규칙: 시나리오 이름으로 분기하지 않는다. 모든 판단은 상태와 도메인 팩으로만 한다. (§14)
 import {
-  applyOp, gridCell, route, soften, warningHeadline, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
+  applyOp, buildRuleFigures, familyClaim, gridCell, route, soften, warningHeadline, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
   type BoardTemplate, type DomainPack, type L0Engine, type Packs,
 } from '@eary/core';
 import {
   ACTION_CATEGORIES, SIGNAL_LABEL,
   type BoardEl, type C2S, type CallState, type Domain, type Entity, type LatencySpan, type Mode, type Op,
-  type BoardPatch, type ProviderStatus, type RiskSignal, type S2C, type Scenario, type SignalCategory, type SourceRef, type Speaker, type Suggestion, type Utterance,
+  type BoardPatch, type Figure, type ProviderStatus, type RiskSignal, type S2C, type Scenario, type SignalCategory, type SourceRef, type Speaker, type Suggestion, type Utterance,
 } from '@eary/schema';
 import { SCENARIOS } from '@eary/scenario';
 import { BoardAgent, type AgentContext } from './agent';
@@ -25,6 +25,7 @@ const PROVISIONAL_TTL_MS = 1500;
 const PROSECUTION_TITLES = new Set(['검사', '수사관', '검찰수사관', '형사', '조사관']);
 const BATCH_MS = 16;
 const CANVAS_ID = 'board:canvas';
+const GENERIC_ORGS = new Set(['검찰청', '검찰', '경찰청', '경찰', '경찰서', '법원', '은행', '금융기관', '공공기관', '정부']);
 const CASE_MAP = 'board:impersonation.entityMap';
 const clockOf = (ms: number) => { const t = Math.floor(ms / 1000); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')} 발언`; };
 const KIND_KO: Record<string, string> = { org: '기관', person: '인물', case: '사건', account: '나', amount: '금액', date: '일정', duration: '기간', condition: '조건', demand: '요구', product: '상품' };
@@ -130,6 +131,8 @@ export class CallSession {
     if (this.d.agentChat && this.d.web) {
       this.agent = new BoardAgent(this.d.agentChat, this.d.web, {
         board: () => this.canvas(),
+        figure: (f) => this.addAgentFigure(f),
+        figureKinds: () => this.state.figureOrder.map((id) => this.state.figures[id]?.kind ?? ''),
         apply: (ps) => this.canvasApply(ps),
         context: () => this.agentContext(),
         now: () => this.now(),
@@ -557,8 +560,11 @@ export class CallSession {
     for (const s of Object.values(this.state.signals)) {
       if (s.sources.some((x) => x.utteranceId === id) && s.active && !s.origin.includes('verify')) this.emit({ op: 'signal.upsert', s: { ...s, active: false } });
     }
+    this.retractFrom(id);
     this.onFinal(id, speaker, text, u.startMs, u.endMs, u.rev + 1, text === u.text ? 'final' : 'edited', source);
     this.recomputeRisk(true);
+    // 단계가 내려간 뒤의 상황 문장·추천·지도를 다시 맞춘다 (실기: 내려갔는데 "위험한 행동을 직접 요구"가 남았다)
+    this.afterChange();
   }
 
   // ── D1 · L1 ────────────────────────────────────────────────
@@ -634,6 +640,16 @@ export class CallSession {
         // 실측: STT 오인식 "범주에 연루"를 L1이 사건번호 "범주"로 잡아 누적 단계가 너무 일찍 떴다
         const formatted = FORMATTED_TYPES.has(e.type as Entity['type']);
         // 기관·인물은 L0 사전으로 다시 정규화해서 같은 키로 합친다
+        // 부서("형사3부")는 기관 카드를 따로 만들지 않고 기존 기관의 부가 정보로, 이미 기관이 있을 때 일반 명칭("검찰청")은 버린다 (실기 잡음)
+        if (e.type === 'org') {
+          const existing = Object.values(this.state.entities).find((x) => x.type === 'org' && x.certainty !== 'provisional');
+          // 기관이 이미 있을 때만 부서로 본다 (없으면 "신한카드 이상거래 탐지팀"처럼 그 자체가 기관이다)
+          if (existing && /^[가-힣]*\d*(부|과|팀|계)$/.test(e.value.replace(/\s+/g, '')) && !/(본부|정부)$/.test(e.value)) {
+            if (!existing.attrs.dept) this.upsertEntity({ ...existing, attrs: { ...existing.attrs, dept: e.value, sub: e.value } });
+            return;
+          }
+          if (existing && GENERIC_ORGS.has(e.value.replace(/\s+/g, '')) && existing.value !== e.value) return;
+        }
         const viaL0 = this.d.l0.scan(e.quote).entities.find((x) => x.type === e.type);
         const key = viaL0?.key ?? (e.type === 'person' ? entityKey('person', e.name ?? e.value.split(/\s/)[0] ?? e.value) : entityKey(e.type, e.value));
         const cur = this.state.entities[key];
@@ -683,6 +699,28 @@ export class CallSession {
     }, PROVISIONAL_TTL_MS));
   }
 
+  /**
+   * 발언 고치기·화자 바꾸기: 그 발언에서만 나온 정보는 지우고(다시 뽑는다), 다른 발언에도 근거가 있으면 이 발언 근거만 뺀다.
+   * 실기: 오인식 사건번호(48270)를 고쳐도 틀린 카드가 사건 슬롯을 차지해 고친 번호가 그려지지 않았다.
+   */
+  private retractFrom(id: string) {
+    for (const e of Object.values(this.state.entities)) {
+      if (!e.sources.some((x) => x.utteranceId === id)) continue;
+      const rest = e.sources.filter((x) => x.utteranceId !== id);
+      if (rest.length) { this.emit({ op: 'entity.upsert', e: { ...e, sources: rest } }); continue; }
+      this.emit({ op: 'entity.remove', key: e.key });
+      this.canvasEntity(e, true);
+      for (const b of Object.values(this.state.boards)) {
+        if (b.els[`card:${e.key}`]) this.emit({ op: 'board.patch', boardId: b.id, patch: { remove: { id: `card:${e.key}` } }, atMs: this.now() });
+      }
+      // 그 정보로 만든 조회 결과 박스도 지운다 (고친 값으로 다시 조회)
+      for (const b of Object.values(this.state.boards)) {
+        for (const elId of Object.keys(b.els).filter((k) => k.includes(e.key) && k.startsWith('callout:'))) this.emit({ op: 'board.patch', boardId: b.id, patch: { remove: { id: elId } }, atMs: this.now() });
+      }
+      for (const k of [...this.verified]) if (k.includes(e.value) || k.includes(e.key)) this.verified.delete(k);
+    }
+  }
+
   /** 확정된 적 없는 잠정 정보만 사라질 수 있다 (§8.10 정확도 1) */
   private removeProvisional(key: string) {
     const e = this.state.entities[key];
@@ -719,7 +757,7 @@ export class CallSession {
     if (this.state.boardOrder.some((id) => id !== CANVAS_ID)) return;
     if (!guess && Object.keys(this.state.entities).length === 0) return;
     const tpl = this.templateFor(guess ?? 'general') ?? this.templateFor('general');
-    if (tpl) this.openBoard(tpl, true);
+    if (tpl && tpl.id !== 'impersonation.entityMap') this.openBoard(tpl, true);
     this.ensureCanvas();
   }
 
@@ -735,14 +773,29 @@ export class CallSession {
   private setDomain(domain: Domain, confidence: number) {
     this.emit({ op: 'domain.set', domain, confidence });
     if (domain === 'unknown') return;
+    // 첫 단어("휴대폰")로 추측해 연 요금 보드는 요금 상담이 아니라고 정해지면 닫는다 (실기: 가족 사칭 통화에 "결합 요금 상담" 탭)
+    if (domain !== 'billing' && this.state.boards['board:billing.compare']) this.emit({ op: 'board.remove', boardId: 'board:billing.compare' });
     const tpl = this.templateFor(domain);
     if (!tpl || this.state.boards[`board:${tpl.id}`]) return;
+    if (tpl.id === 'impersonation.entityMap') return; // 사건 지도는 ensureCaseMap이 조건을 보고 연다
     // 도메인이 바뀌면 새 탭으로. 기존 보드는 그대로 둔다 (P5). 지금 보는 게 general이면 새 보드로 이동
     const active = this.state.activeBoardId ? this.state.boards[this.state.activeBoardId] : undefined;
     this.openBoard(tpl, !active || active.templateId === 'general.facts' || active.templateId === 'canvas');
   }
 
   // ── 검증 ───────────────────────────────────────────────────
+  /** 시연(대본 재생)일 때만 가상 명단·가상 사건 조회를 쓴다. 실제 통화에서 가상 명단 기준 "목록에 없음"은 진짜 검사도 사칭으로 만든다 */
+  /** 요금표는 가상 데이터라 시연 재생에서만 쓴다 (실기: 실제 SKT 상담을 가상 결합 요금 118,000원과 대조해 "말과 다름") */
+  private tariff() {
+    if (!this.demo) return undefined;
+    const product = Object.values(this.state.entities).find((e) => e.type === 'product')?.value ?? '결합';
+    return this.d.verifier.tariff(product) ?? this.d.verifier.tariff('결합');
+  }
+
+  private get demo() {
+    return this.state.mode === 'replay-fixture' || this.state.mode === 'replay-audio';
+  }
+
   private runVerify() {
     const ents = Object.values(this.state.entities).filter((e) => e.certainty !== 'provisional');
     const org = ents.find((e) => e.type === 'org');
@@ -752,15 +805,19 @@ export class CallSession {
       if (this.verified.has(k)) continue;
       this.verified.add(k);
       const callId = this.state.callId;
-      void this.d.verifier.prosecutor(org.value, p.attrs.name ?? p.value).then((r) => this.state.callId === callId && this.onProsecutor(r, org, p));
+      if (this.demo) void this.d.verifier.prosecutor(org.value, p.attrs.name ?? p.value).then((r) => this.state.callId === callId && this.onProsecutor(r, org, p));
+      else void this.identityBySearch(org, p).then(() => this.state.callId === callId && this.afterChange());
     }
     for (const c of ents.filter((e) => e.type === 'case')) {
       const k = `case:${c.value}`;
       if (this.verified.has(k)) continue;
       this.verified.add(k);
       const callId = this.state.callId;
-      void this.d.verifier.caseNo(c.value, org?.value).then((r) => this.state.callId === callId && this.onCase(r, c));
+      if (this.demo) void this.d.verifier.caseNo(c.value, org?.value).then((r) => this.state.callId === callId && this.onCase(r, c));
+      // 실제 통화: 사건 조회는 본인 인증이 필요해 대신 할 수 없다 → 위험 신호로 쓰지 않는다
+      else this.upsertEntity({ ...c, attrs: { ...c.attrs, status: '대신 조회 불가', statusTone: 'gray', sub: '사건 조회는 본인 인증이 필요해요' } });
     }
+    if (!this.demo && org && this.isAuthority(org)) this.callbackCard(org, ents.find((e) => e.type === 'person'));
     // 공식 안내 대조: 기관을 자칭한 통화에서 요구가 나오면 (§10)
     const cats = this.confirmedCategories();
     const authority = org && (['prosecution', 'police', 'regulator'].includes(org.attrs.kind ?? '') || org.attrs.authority === 'true');
@@ -774,6 +831,41 @@ export class CallSession {
       const ev = this.state.evidence['ev:official'];
       this.emit({ op: 'signal.upsert', s: { id: 'sig:verify:official_mismatch', category: 'official_mismatch', label: SIGNAL_LABEL.official_mismatch, origin: ['verify'], confirmed: true, confidence: 0.95, sources: this.actionSources(), explanation: ev.quote ?? ev.title, active: true } });
     }
+  }
+
+  private isAuthority(org: Entity) {
+    return ['prosecution', 'police', 'regulator'].includes(org.attrs.kind ?? '') || org.attrs.authority === 'true';
+  }
+
+  /**
+   * 실제 통화의 신원 확인: 웹 검색은 "이름이 공개 자료에 있는지"까지만 알려 준다. 통화 상대가 본인인지는 검색으로 알 수 없고,
+   * 사기범은 실존 검사 이름을 도용하기도 한다 → 어느 쪽이든 위험 신호로 쓰지 않는다. 확인은 다시 걸기(callbackCard)로.
+   */
+  private async identityBySearch(org: Entity, p: Entity) {
+    const name = p.attrs.name ?? p.value;
+    const run = this.d.web?.enabledNames.length ? await this.d.web.search(`${org.value} ${name} ${p.attrs.title ?? ''}`.trim()).catch(() => null) : null;
+    const hit = run?.merged.find((h) => h.tier !== 'reference' && `${h.title} ${h.snippet}`.includes(name) && /검사|수사관|형사|조사관/.test(`${h.title} ${h.snippet}`));
+    const cur = this.state.entities[p.key];
+    if (!cur) return;
+    const evId = `ev:identity:${p.key}`;
+    this.emit({ op: 'evidence.upsert', ev: { id: evId, tier: hit ? (hit.tier === 'official' ? 'official' : 'reference') : 'lookup', title: `${org.value} ${name} ${p.attrs.title ?? ''} 공개 자료`.trim(), quote: hit?.snippet.slice(0, 120), url: hit?.url, scope: hit ? `확인 범위 · 웹 검색 (${hit.host})` : '확인 범위 · 웹 검색', query: run?.query, resultCount: run?.merged.length ?? 0, status: hit ? 'found' : 'unverifiable', reason: hit ? undefined : 'no_source', caveat: '이름이 공개 자료에 있어도 통화 상대가 그 사람이라는 뜻은 아니에요. 실존 인물 이름을 도용하기도 해요.', isMock: false, checkedAtMs: this.now(), linkedUtteranceIds: p.sources.map((x) => x.utteranceId) } });
+    // 표시는 항상 "본인 확인 안 됨". 흔한 이름은 검색에 잘 걸려서 "공개 자료에 있음"이 사칭범에게 신뢰를 줄 수 있다 (실기: 사칭 통화의 "박정훈 형사")
+    this.upsertEntity({ ...cur, attrs: { ...cur.attrs, status: '본인 확인 안 됨', statusTone: 'gray', sub: hit ? '같은 이름의 공개 자료 있음 — 도용일 수 있어요' : '다시 걸어서만 확인할 수 있어요' } });
+  }
+
+  /** AI 답변이 사건 지도의 "확인 방법" 카드와 같은 내용을 쓰도록 */
+  private callbackHint(): string {
+    const org = Object.values(this.state.entities).find((e) => e.type === 'org' && e.certainty !== 'provisional');
+    if (!org) return '통화를 끊고 기관 공식 홈페이지에서 직접 찾은 대표번호로 다시 걸어 확인';
+    const person = Object.values(this.state.entities).find((e) => e.type === 'person' && e.certainty !== 'provisional');
+    return `통화를 끊고 ${officialLine(org.value, org.attrs.kind)}로 다시 걸어 ${person ? `${person.attrs.name ?? person.value} ${person.attrs.title ?? ''} ` : '담당자 '}연결을 요청`;
+  }
+
+  /** 실제 통화: 사건 지도에 "확인 방법" 카드 — 직접 찾은 대표번호로 다시 걸어 연결 요청 */
+  private callbackCard(org: Entity, person?: Entity) {
+    const num = officialLine(org.value, org.attrs.kind);
+    const who = person ? `‘${person.attrs.name ?? person.value} ${person.attrs.title ?? ''}${person.attrs.title === '검사' ? '실' : ''}’ 연결을 요청하세요` : '담당자 연결을 요청하세요';
+    this.boardCallout({ kind: 'callout', id: 'callout:callback', zone: 'lookup', tone: 'info', title: '확인 방법', body: `통화를 끊고 직접 찾은 대표번호로 다시 걸어 ${who}.\n${num}`, pills: [{ text: '다시 걸기', tone: 'teal' }], sources: org.sources });
   }
 
   private evidence(id: string, r: VerifyResult, claimId: string | undefined, links: string[]) {
@@ -824,9 +916,28 @@ export class CallSession {
     this.afterChange();
   }
 
+  /** 캔버스 도식(규칙): 상태에서 다시 계산해서 달라진 도식만 보낸다. 에이전트 도식(ag:)은 건드리지 않는다 */
+  private syncFigures() {
+    const figs = buildRuleFigures(this.state, this.state.domain === 'billing' ? this.tariff() : undefined);
+    for (const f of figs) {
+      const cur = this.state.figures[f.id];
+      if (cur) { const { meta: _m, ...rest } = cur; if (JSON.stringify(rest) === JSON.stringify(f)) continue; }
+      this.emit({ op: 'figure.upsert', figure: { ...f, meta: { by: 'rule', updatedAtMs: this.now(), rev: (cur?.meta.rev ?? 0) + 1 } } });
+    }
+  }
+
+  /** 에이전트가 그린 도식 (검증·안전장치 통과 후) */
+  addAgentFigure(f: Figure) {
+    const cur = this.state.figures[f.id];
+    this.emit({ op: 'figure.upsert', figure: { ...f, meta: { by: 'agent', updatedAtMs: this.now(), rev: (cur?.meta.rev ?? 0) + 1 } } });
+  }
+
   /** 위험 신호가 생기면 도메인과 상관없이 사건 지도를 연다 (대출·택배·가족 사칭 등도 그림으로) */
+  /** 사건 지도는 위험 신호가 있거나, 사칭 유형으로 분류되고 기관·인물이 잡혔을 때 연다 (실기: 카드사 정상 통화에 빈 지도가 열렸다) */
   private ensureCaseMap() {
-    if (this.state.risk.level === 'none' || this.state.boards[CASE_MAP]) return;
+    if (this.state.boards[CASE_MAP]) return;
+    const hasWho = Object.values(this.state.entities).some((e) => (e.type === 'org' || e.type === 'person') && e.certainty !== 'provisional');
+    if (this.state.risk.level === 'none' && !(this.state.domain === 'impersonation' && hasWho)) return;
     const tpl = this.d.packs.templates['impersonation.entityMap'];
     if (!tpl) return;
     const active = this.state.activeBoardId ? this.state.boards[this.state.activeBoardId] : undefined;
@@ -853,7 +964,11 @@ export class CallSession {
       const id = `demand:${sg.category}`;
       const cur = this.state.boards[CASE_MAP]!.placed[id];
       // 위치는 처음 놓일 때 정한다: 이미 그려진 요구 카드 수 = 다음 칸 (나중에 순서가 바뀌어도 겹치지 않게)
-      const at = cur ?? gridCell(zone, Object.keys(this.state.boards[CASE_MAP]!.els).filter((k) => k.startsWith('demand:')).length);
+      // 비어 있는 가장 앞 칸 (카드가 지워진 자리를 다시 쓴다 — 개수로 정하면 남은 카드와 겹친다)
+      const taken = new Set(Object.entries(this.state.boards[CASE_MAP]!.placed).filter(([k]) => k.startsWith('demand:')).map(([, p]) => p.y));
+      let slot = 0;
+      while (taken.has(gridCell(zone, slot).y)) slot++;
+      const at = cur ?? gridCell(zone, slot);
       put({ kind: 'card', id, zone: 'demands', label: '요구', value: sg.label, sub: u ? clockOf(u.startMs) : undefined, pills: [], style: 'demand', sources: sg.sources }, at);
     }
     // 계좌 언급이 없는 사기(앱 설치 등)에서도 요구가 가리킬 "나" 카드를 둔다
@@ -861,6 +976,13 @@ export class CallSession {
     const hasAccount = Boolean(this.state.boards[CASE_MAP]!.els['card:account:me']);
     if (first.size && !hasAccount) put({ kind: 'card', id: 'card:me', zone: 'slot', label: '나', value: '전화를 받은 나', pills: [], style: 'me', sources: [] }, { x: slotMe.x, y: slotMe.y, w: slotMe.w, h: slotMe.h });
     const accId = hasAccount ? 'card:account:me' : 'card:me';
+    // 근거가 사라진 요구 카드(발언 고치기·화자 바꾸기)는 지운다. 사용자가 바로잡은 것이라 그대로 두면 틀린 그림이다
+    for (const id of Object.keys(this.state.boards[CASE_MAP]!.els).filter((k) => k.startsWith('demand:'))) {
+      if (!first.has(id.slice(7) as SignalCategory)) {
+        this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { remove: { id } }, atMs: now });
+        // remove 패치는 그 요소에 붙은 연결선도 함께 지운다 (applyBoardPatch)
+      }
+    }
     const acc = this.state.boards[CASE_MAP]!.placed[accId];
     const d0 = this.state.boards[CASE_MAP]!.placed[`demand:${[...first.keys()][0]}`];
     if (acc && d0 && !this.state.boards[CASE_MAP]!.edges['edge:demands->me']) {
@@ -877,6 +999,8 @@ export class CallSession {
     const tpl = this.d.packs.templates['impersonation.entityMap'];
     const b = this.state.boards[CASE_MAP];
     if (!b || !tpl) return;
+    // 위험 신호가 없는 통화에서는 경고성 메모를 지도에 올리지 않는다 (실기: 진짜 검사 통화에 "검찰은 전화로 출석을 요구하지 않습니다")
+    if (this.state.risk.level === 'none') return;
     const safe = soften(text);
     if (!safe) return;
     const el: BoardEl = { kind: 'hand', id: 'hand:agent', zone: 'agent', text: safe.length > 44 ? `${safe.slice(0, 42)}…` : safe, sources: [] };
@@ -890,8 +1014,7 @@ export class CallSession {
     const b = this.state.boards['board:billing.compare'];
     const tpl = this.d.packs.templates['billing.compare'];
     if (!b || !tpl) return;
-    const product = Object.values(this.state.entities).find((e) => e.type === 'product')?.value ?? '결합';
-    const { els, placed, edges } = buildBillingBoard(this.state, tpl, this.d.verifier.tariff(product) ?? this.d.verifier.tariff('결합'));
+    const { els, placed, edges } = buildBillingBoard(this.state, tpl, this.tariff());
     const now = this.now();
     for (const el of els) {
       const cur = this.state.boards[b.id]!.els[el.id];
@@ -939,6 +1062,7 @@ export class CallSession {
     this.ensureCaseMap();
     this.syncCaseMapExtras();
     this.refreshSignalSummary();
+    this.syncFigures();
     this.refreshTags();
     this.refreshSuggestions();
     const text = this.situationText();
@@ -951,6 +1075,12 @@ export class CallSession {
   }
 
   private recomputeRisk(allowDowngrade: boolean) {
+    // "공식 안내와 다름"은 행동 요구가 있을 때만 성립한다 (실기: 고치기로 송금 요구가 사라져도 남아서 '누적'이 유지됐다)
+    const om = this.state.signals['sig:verify:official_mismatch'];
+    if (om) {
+      const hasAction = Object.values(this.state.signals).some((x) => x.active && x.confirmed && ACTION_CATEGORIES.includes(x.category));
+      if (om.active !== hasAction) this.emit({ op: 'signal.upsert', s: { ...om, active: hasAction } });
+    }
     const next = nextRisk(this.state.risk, { signals: Object.values(this.state.signals), domain: this.state.domain, gate: this.gate() }, this.now(), allowDowngrade);
     if (!sameRisk(next, this.state.risk)) this.emit({ op: 'risk.set', risk: next });
     this.refreshSignalSummary();
@@ -1001,11 +1131,14 @@ export class CallSession {
     const actions = this.confirmedCategories().filter((c) => ACTION_CATEGORIES.includes(c));
     const org = Object.values(this.state.entities).find((e) => e.type === 'org' && e.certainty !== 'provisional');
     const lawEnf = ['prosecution', 'police'].includes(org?.attrs.kind ?? '');
+    const family = !org && familyClaim(this.state);
     const urgent: Suggestion | undefined = actions.length ? {
       id: 'dont_transfer', kind: 'action', text: warningHeadline(actions).replace(/^지금 /, ''),
-      why: lawEnf ? '수사기관은 전화로 이체나 인증정보를 요구하지 않아요.' : '공공기관·금융회사는 전화로 앱 설치·이체·인증정보를 요구하지 않아요.',
+      why: lawEnf ? '수사기관은 전화로 이체나 인증정보를 요구하지 않아요.' : family ? '가족이라도 원래 알던 번호로 다시 걸어 직접 확인하세요.' : '공공기관·금융회사는 전화로 앱 설치·이체·인증정보를 요구하지 않아요.',
     } : undefined;
     let items = (kept.length ? kept : catalog.slice(0, 2)).filter((x) => x.id !== 'dont_transfer');
+    // 가족 사칭에 "공식 번호를 물어보세요"는 맞지 않는다 → 둘만 아는 질문
+    if (family) items = [{ id: 'ask_family_secret', kind: 'ask', text: '둘만 아는 걸 물어보세요', why: '목소리만으로는 가족인지 알 수 없어요.' }, ...items.filter((x) => x.id !== 'ask_contact')];
     if (urgent) items = [urgent, ...items].slice(0, 2);
     const key = (xs: Suggestion[]) => xs.map((x) => `${x.id}:${x.text}`).join();
     if (key(items) !== key(this.state.suggestions)) this.emit({ op: 'suggestions.set', items });
@@ -1052,8 +1185,8 @@ export class CallSession {
     const found = this.canvas() ? Object.values(this.canvas()!.els).filter((e) => e.kind === 'item' && (e.tone === 'official' || e.section === 'sec:evidence')).slice(-6).map((e) => (e.kind === 'item' ? `${e.label}: ${e.value}${e.sub ? ` — ${e.sub}` : ''}` : '')) : [];
     const q = preset === 'simplify' ? '지금 상황을 아주 쉽게 3줄로 설명해 줘.' : text;
     void chat.chat([
-      { role: 'system', content: '너는 통화를 함께 듣는 보조 "이어리"다. 사용자는 통화 중이다. 3문장 이내, 쉬운 한국어로 답한다. 단정하지 않는다("사기다" 금지, "확인되지 않았다"는 가능). 이어리는 대신 전화를 끊거나 연락하거나 신고하지 않는다. 확인은 "기관 공식 홈페이지에서 직접 찾은 대표번호"로 하라고 안내한다. 전화번호를 직접 쓰지 않는다(검색 결과에 나온 번호도 쓰지 않는다). 예외: 경찰 112, 금융감독원 1332. 근거가 있으면 짧게 언급한다.' },
-      { role: 'user', content: JSON.stringify({ 질문: q, 위험_단계: ctx.risk, 신호: ctx.signals, 최근_대화: ctx.transcript.slice(-6), 확인_결과: evidence, 찾은_자료: found }) },
+      { role: 'system', content: '너는 통화를 함께 듣는 보조 "이어리"다. 사용자는 통화 중이다. 3문장 이내, 쉬운 한국어로 답한다. 단정하지 않는다("사기다" 금지, "확인되지 않았다"는 가능). 진위를 묻는 질문("진짜 검사 맞아요?")에는 "아니요/맞아요"로 시작하지 말고 "통화만으로는 확인할 수 없어요"로 시작한 뒤 확인_방법을 그대로 안내한다. 이어리는 대신 전화를 끊거나 연락하거나 신고하지 않는다. 전화번호는 확인_방법에 있는 번호와 경찰 112, 금융감독원 1332만 쓴다(검색 결과에 나온 번호는 쓰지 않는다). 근거가 있으면 짧게 언급한다.' },
+      { role: 'user', content: JSON.stringify({ 질문: q, 위험_단계: ctx.risk, 신호: ctx.signals, 최근_대화: ctx.transcript.slice(-6), 확인_결과: evidence, 찾은_자료: found, 확인_방법: this.callbackHint() }) },
     ], []).then((r) => {
       if (this.state.callId !== callId) return;
       const answer = r?.msg.content?.trim();
@@ -1121,4 +1254,14 @@ function concatPcm(chunks: Uint8Array[]): Int16Array {
   let o = 0;
   for (const c of chunks) { const n = Math.min(c.length, buf.length - o); buf.set(c.subarray(0, n), o); o += n; }
   return new Int16Array(buf.buffer, 0, buf.length / 2);
+}
+
+/** 기관별 다시 걸 번호: 검증된 공식 번호만 (core/safety OFFICIAL_NUMBERS와 같은 번호) */
+function officialLine(org: string, kind?: string): string {
+  if (kind === 'prosecution' || /검찰|지검/.test(org)) return '검찰 민원 1301 또는 공식 홈페이지의 해당 청 대표번호';
+  if (/금융감독원|금감원/.test(org) || kind === 'regulator') return '금융감독원 1332';
+  if (/건강보험/.test(org)) return '국민건강보험공단 1577-1000';
+  if (kind === 'police' || /경찰/.test(org)) return '경찰 민원은 공식 홈페이지 대표번호 · 긴급 신고 112';
+  if (kind === 'finance' || /카드|은행|뱅크|증권|보험/.test(org)) return '카드 뒷면·통장·공식 앱에 적힌 고객센터 번호';
+  return '기관 공식 홈페이지에서 찾은 대표번호';
 }

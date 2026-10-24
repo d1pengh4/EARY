@@ -2,7 +2,7 @@
 // - 좌표는 정하지 않는다. 구역·항목·연결의 "의도"만 내고 배치는 core/canvas.ts가 한다.
 // - 위험 단계는 바꿀 수 없다 (P2). 판정(verdict)은 근거 카드로만 남는다.
 import { link, scrubPhones, setSectionStatus, soften, upsertChild, upsertSection } from '@eary/core';
-import type { Board, BoardPatch, ItemTone, SectionLayout, SourceRef } from '@eary/schema';
+import type { Board, BoardPatch, Figure, FigTone, ItemTone, SectionLayout, SourceRef } from '@eary/schema';
 import type { ChatMsg, GroqChat, ToolDef } from './groqChat';
 import { readPage, type MergedHit, type WebSearch } from './search';
 
@@ -16,6 +16,9 @@ export interface AgentContext {
 
 export interface CanvasPort {
   board(): Board | undefined;
+  /** 캔버스 도식 그리기 (서버가 검증·안전장치 후 저장) */
+  figure(f: Figure): void;
+  figureKinds(): string[];
   apply(patches: BoardPatch[]): void;
   context(): AgentContext;
   now(): number;
@@ -31,15 +34,20 @@ const SYSTEM = `너는 통화를 함께 듣는 보조 "이어리"의 분석 보�
 목표: 상대가 한 말을 이해하고 검증하기 쉽게, 보드에 스스로 판단해서 정리한다.
 매 턴 우선순위:
 1) 대조표 갱신: section(id "check", layout "table", columns ["상대가 한 말","공식 자료","판단"])에 주장 하나당 row 하나. 판단은 "맞음"·"다름"·"확인 못 함" 중 하나. 이미 검색한 결과(searched)로 판단할 수 있으면 검색하지 말고 바로 쓴다.
-2) 바로 쓸 수 있는 사실(공식 신청 경로, 기관이 안 하는 일)을 공식 자료(official)에서 찾으면 note로 짧게 알린다. 전화번호는 공식 자료(정부·공공기관 도메인)의 결과에 있을 때만 쓰고, 블로그·업체·뉴스의 번호는 절대 쓰지 않는다.
+2) 바로 쓸 수 있는 사실(공식 신청 경로, 기관이 안 하는 일)을 공식 자료(official) 검색 결과에서 찾으면 note로 짧게 알린다. 검색 결과에 없는 일반화("○○은 전화로 ~하지 않는다")를 지어내지 않는다. 위험 신호(signals)가 비어 있으면 경고(warning) 메모를 쓰지 않는다. 전화번호는 공식 자료(정부·공공기관 도메인)의 결과에 있을 때만 쓰고, 블로그·업체·뉴스의 번호는 절대 쓰지 않는다.
 3) 아직 확인 안 된 주장이 있으면 web_search 1~2번. 공식 자료(정부·공공기관) 우선, 뉴스·후기는 참고.
-4) 관계(graph)·순서(steps)·일정(timeline)이 이해에 도움이 될 때만 새 구역으로 그린다.
+4) draw로 캔버스에 그림을 그린다. 상황을 가장 잘 보여 주는 그림을 고르고, 이미 있는 그림 종류(figure_kinds)와 겹치지 않는 종류를 우선한다:
+   관계·연결이 핵심이면 graph, 순서·절차면 flow, 날짜·시간이면 timeline, 숫자면 bars, 분류면 matrix, 장단점·근거 비교면 balance, 결정적인 말이면 quote, 확인할 것이면 checklist.
+   반드시 figure_kinds_unused(아직 없는 종류) 중에서 고른다. 매 턴 최대 1개, 글은 짧게. 확인되지 않은 것은 tone "claim"으로.
+   risk가 "none"이고 signals가 비어 있으면 사기 대응·안전 조치 그림을 그리지 않는다. 대신 통화 내용 자체(요금 계산, 절차, 일정, 선택지 비교)를 그린다.
+   quote는 위험하거나 판단을 바꾸는 결정적인 말일 때만 쓴다(인사·자기소개 금지).
+   숫자가 있으면 bars에 실제 값(value 숫자)을 넣는다. 라벨만 늘어놓은 그림은 그리지 않는다.
 이미 있는 구역·항목은 유지하고 새로 알게 된 것만 추가하거나 상태를 바꾼다. 같은 내용을 다시 만들지 않는다.
 규칙: 단정하지 않는다("보이스피싱입니다" 금지, "의심돼요"는 가능). "확인 못 함"은 "없음"이 아니다. 검색 결과는 통화 상대의 신원을 증명하지 않는다. 이어리는 대신 행동하지 않는다.
 글은 짧게: label 2~6자, value 25자 이내, note 40자 이내. 한 턴에 도구 호출은 꼭 필요한 만큼만. 더 할 게 없으면 done.
 id는 영문 소문자·숫자·밑줄로 짧게. 들은 정보 카드(heard:...)는 이미 보드에 있으니 link로 연결만 해도 된다.
 기본 구역은 이미 있다. 새로 만들지 말고 이 id를 그대로 쓴다: heard(들은 정보), search(찾은 자료), evidence(확인 결과), think(메모).
-쓸 수 있는 도구는 web_search, read_page, section, item, row, link, verdict, note, done뿐이다.`;
+쓸 수 있는 도구는 web_search, read_page, section, item, row, link, verdict, note, draw, done뿐이다.`;
 
 const TOOLS: ToolDef[] = [
   fn('web_search', '웹 검색. 결과는 보드 "찾은 자료"에 자동으로 표시된다. 결과 id(r1, r2…)를 verdict에 쓴다.', { query: str('한국어 검색어, 짧게'), why: str('왜 찾는지 (화면 표시용, 15자 이내)') }, ['query', 'why']),
@@ -50,6 +58,8 @@ const TOOLS: ToolDef[] = [
   fn('link', '두 항목을 선으로 잇는다.', { from: str('항목 id'), to: str('항목 id'), label: str('관계, 6자 이내'), kind: { type: 'string', enum: ['claim', 'evidence', 'sequence'] } }, ['from', 'to', 'kind']),
   fn('verdict', '주장 항목을 검색 근거로 판정하고 근거 카드를 남긴다.', { item: str('판정할 항목 id'), status: { type: 'string', enum: ['confirmed', 'contradicted', 'unknown'] }, reason: str('판정 이유 40자 이내'), result_ids: { type: 'array', items: { type: 'string' } } }, ['item', 'status', 'reason']),
   fn('note', '사용자에게 꼭 필요한 짧은 메모를 남긴다.', { text: str('40자 이내'), tone: { type: 'string', enum: ['info', 'warning'] } }, ['text']),
+  fn('draw', '캔버스에 그림을 하나 그린다(같은 id면 갱신). data 형식: graph {nodes:[{id,label,sub?,tone}],edges:[{from,to,label?,style:claim|solid|money|warn}]} · flow {steps:[{label,sub?,state:done|now|next|warn}]} · timeline {events:[{at:"00:12",label,tone}]} · bars {unit?,bars:[{label,value,tone}]} · matrix {xLabels:[a,b],yLabels:[a,b],cells:[{x:0|1,y:0|1,items:[..]}]} · balance {left:{title,items},right:{title,items}} · quote {quote,speaker,note?,tone} · checklist {items:[{text,done}]} · compare {rows:[{claim,fact,verdict:match|mismatch|unknown}]}. tone: neutral|claim|ok|warn|danger|info',
+    { kind: { type: 'string', enum: ['graph', 'flow', 'timeline', 'bars', 'matrix', 'balance', 'quote', 'checklist', 'compare'] }, id: str('그림 id'), title: str('제목 14자 이내'), data: { type: 'object', description: '종류별 데이터' } }, ['kind', 'id', 'title', 'data']),
   fn('done', '이번 턴에 할 일이 끝났다.', {}, []),
 ];
 
@@ -63,6 +73,7 @@ export class BoardAgent {
   private searched: { q: string; top: string[] }[] = [];
   private searchSeq = 0;
   private shownUrls = new Set<string>();
+  private drawn = new Set<string>();
   private abort: AbortController | null = null;
 
   constructor(private readonly chat: GroqChat, private readonly web: WebSearch, private readonly port: CanvasPort) {}
@@ -136,7 +147,7 @@ export class BoardAgent {
       const ctx = this.port.context();
       const msgs: ChatMsg[] = [
         { role: 'system', content: SYSTEM },
-        { role: 'user', content: JSON.stringify({ trigger: reason, ...ctx, transcript: ctx.transcript.slice(-6), board: this.boardSummary(), searched: this.searched.slice(-4).map((x) => ({ q: x.q, top: x.top.slice(0, 3) })) }) },
+        { role: 'user', content: JSON.stringify({ trigger: reason, ...ctx, transcript: ctx.transcript.slice(-6), board: this.boardSummary(), figure_kinds: this.port.figureKinds(), figure_kinds_unused: AGENT_KINDS.filter((k) => !this.port.figureKinds().includes(k)), searched: this.searched.slice(-4).map((x) => ({ q: x.q, top: x.top.slice(0, 3) })) }) },
       ];
       for (let step = 0; step < MAX_STEPS; step++) {
         const r = await this.chat.chat(msgs, TOOLS, this.abort.signal);
@@ -210,6 +221,29 @@ export class BoardAgent {
         this.port.apply(link(this.port.board()!, { from: evId, to: target.id, kind: 'evidence' }));
         return { ok: true };
       }
+      case 'draw': {
+        // 다양성: 이미 캔버스에 있는 종류는 거절하고 아직 없는 종류를 알려 준다 (실기: 체크리스트만 세 번 그렸다)
+        const have = this.port.figureKinds();
+        const id = `ag:${slug(a.id)}`;
+        const unused = AGENT_KINDS.filter((k) => !have.includes(k));
+        let kind = String(a.kind);
+        let data = normalizeData(kind, a.data);
+        if (have.includes(kind) && !this.drawn.has(id)) {
+          // 이미 있는 종류면 같은 내용을 아직 없는 종류로 바꿔 그린다 (실기: 에이전트가 체크리스트만 고르고 바로 done → 0장)
+          const conv = kind === 'bars' && !this.drawn.has('bars') ? { kind, data } : convertFigure(kind, data, unused);
+          if (kind === 'bars') this.drawn.add('bars');
+          if (!conv) { this.port.log(`draw 거절(이미 있음) ${kind}`); return { error: `이미 있는 종류(${kind})다. 아직 없는 종류 중에서 골라라: ${unused.join(', ')}` }; }
+          this.port.log(`draw 변환 ${kind} → ${conv.kind}`);
+          ({ kind, data } = conv);
+        }
+        if (kind === 'quote' && /^(안녕하세요|여보세요)/.test(String(data?.quote ?? '').trim()) && !/(송금|이체|계좌|인증|앱|비밀|돈)/.test(String(data?.quote ?? ''))) { this.port.log('draw 거절(인사말 인용)'); return { error: '인사·자기소개는 인용하지 않는다' }; }
+        const f = sanitizeFigure(kind, id, String(a.title ?? '').slice(0, 20), data);
+        if (!f) { this.port.log(`draw 거절(형식) ${kind} ${JSON.stringify(data).slice(0, 160)}`); return { error: 'bad figure data' }; }
+        this.port.log(`draw ${kind} ${id}`);
+        this.drawn.add(id);
+        this.port.figure(f);
+        return { ok: true };
+      }
       case 'note': {
         this.ensureSection('think', '이어리가 정리 중', 'notes');
         const n = Object.values(this.port.board()!.els).filter((e) => e.kind === 'item' && e.section === 'sec:think').length;
@@ -258,6 +292,7 @@ export class BoardAgent {
 }
 
 /** 서버가 만든 기본 구역: 에이전트가 이 이름을 쓰면 새로 만들지 않고 그대로 쓴다 */
+const AGENT_KINDS = ['graph', 'flow', 'matrix', 'timeline', 'bars', 'balance', 'quote', 'compare', 'checklist'];
 const BUILTIN = new Set(['heard', 'search', 'evidence', 'think']);
 const LAYOUTS = ['graph', 'table', 'timeline', 'steps', 'cards', 'evidence', 'notes'];
 const TIER_KO = { official: '공식 자료', news: '뉴스', reference: '참고' } as const;
@@ -283,4 +318,96 @@ export function relevant(h: { title: string; snippet: string; tier: string }, qu
   if (head.length >= 4 && !text.includes(head)) return false;
   // 공식 도메인도 검색어 절반 이상이 맞아야 한다 (실기: 요금 상담에 "서울브랜드굿즈 공모"가 공식 자료로 올라옴)
   return h.tier === 'official' ? hit / terms.length >= 0.5 || hit >= 2 : hit / terms.length >= 0.5;
+}
+
+// ── draw 검증: LLM이 낸 데이터를 그릴 수 있는 형태로만 통과시킨다 (글 길이 제한, 단정·번호 정리) ──
+const FIG_TONES: FigTone[] = ['neutral', 'claim', 'ok', 'warn', 'danger', 'info'];
+const ft = (t: unknown): FigTone => (FIG_TONES.includes(t as FigTone) ? (t as FigTone) : 'neutral');
+const tx = (v: unknown, n = 40): string => soften(scrubPhones(String(v ?? '')).text)?.slice(0, n) ?? '';
+const arr = (v: unknown, n: number): any[] => (Array.isArray(v) ? v.slice(0, n) : []); // eslint-disable-line @typescript-eslint/no-explicit-any
+const toMs = (v: unknown) => { const m = String(v ?? '').match(/(\d+):(\d+)/); return m ? (Number(m[1]) * 60 + Number(m[2])) * 1000 : 0; };
+
+export function sanitizeFigure(kind: string, id: string, title: string, d: any): Figure | null { // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (!d || typeof d !== 'object') return null;
+  const t = tx(title, 20) || '그림';
+  switch (kind) {
+    case 'graph': {
+      // 너그럽게: nodes 대신 items로 오면 노드로, id가 없으면 라벨을 id로, 선이 없으면 순서대로 잇는다 (실기: Gemini가 items로 보냄)
+      if (!Array.isArray(d.nodes) && Array.isArray(d.items)) d = { nodes: d.items, edges: d.edges };
+      d = { ...d, nodes: arr(d.nodes, 8).map((n: any) => ({ ...n, id: n.id ?? n.label })) }; // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (!Array.isArray(d.edges) || !d.edges.length) d.edges = d.nodes.slice(1).map((n: any, i: number) => ({ from: d.nodes[i].id, to: n.id, style: 'solid' })); // eslint-disable-line @typescript-eslint/no-explicit-any
+      else d.edges = d.edges.map((e: any) => ({ ...e, from: d.nodes.find((n: any) => n.id === e.from || n.label === e.from)?.id ?? e.from, to: d.nodes.find((n: any) => n.id === e.to || n.label === e.to)?.id ?? e.to })); // eslint-disable-line @typescript-eslint/no-explicit-any
+      const nodes = arr(d.nodes, 8).map((n) => ({ id: String(n.id ?? n.label).slice(0, 24), label: tx(n.label, 14), sub: n.sub ? tx(n.sub, 18) : undefined, tone: ft(n.tone) })).filter((n) => n.label);
+      const ids = new Set(nodes.map((n) => n.id));
+      const edges = arr(d.edges, 12).map((e) => ({ from: String(e.from), to: String(e.to), label: e.label ? tx(e.label, 10) : undefined, style: (['claim', 'solid', 'money', 'warn'].includes(e.style) ? e.style : 'solid') as 'claim' })).filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
+      return nodes.length >= 2 ? { kind: 'graph', id, title: t, nodes, edges } : null;
+    }
+    case 'flow': {
+      const steps = arr(d.steps, 7).map((x) => ({ label: tx(x.label, 16), sub: x.sub ? tx(x.sub, 20) : undefined, state: (['done', 'now', 'next', 'warn'].includes(x.state) ? x.state : 'next') as 'next' })).filter((x) => x.label);
+      return steps.length >= 2 ? { kind: 'flow', id, title: t, steps } : null;
+    }
+    case 'timeline': {
+      const events = arr(d.events, 8).map((e) => ({ atMs: toMs(e.at), label: tx(e.label, 18), tone: ft(e.tone) })).filter((e) => e.label);
+      return events.length >= 2 ? { kind: 'timeline', id, title: t, events } : null;
+    }
+    case 'bars': {
+      const bars = arr(d.bars, 6).map((b) => ({ label: tx(b.label, 20), value: Number(b.value), tone: ft(b.tone) })).filter((b) => b.label && Number.isFinite(b.value) && b.value >= 0);
+      return bars.length ? { kind: 'bars', id, title: t, unit: d.unit ? tx(d.unit, 4) : undefined, bars } : null;
+    }
+    case 'matrix': {
+      const xl = arr(d.xLabels, 2).map((x) => tx(x, 10)), yl = arr(d.yLabels, 2).map((x) => tx(x, 10));
+      if (xl.length !== 2 || yl.length !== 2) return null;
+      const cells = arr(d.cells, 4).map((c) => ({ x: (c.x ? 1 : 0) as 0 | 1, y: (c.y ? 1 : 0) as 0 | 1, items: arr(c.items, 5).map((i) => tx(i, 16)).filter(Boolean) }));
+      return { kind: 'matrix', id, title: t, xLabels: [xl[0]!, xl[1]!], yLabels: [yl[0]!, yl[1]!], cells };
+    }
+    case 'balance': {
+      const side = (v: any) => ({ title: tx(v?.title, 10) || '근거', items: arr(v?.items, 5).map((i) => tx(i, 24)).filter(Boolean) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+      return { kind: 'balance', id, title: t, left: side(d.left), right: side(d.right) };
+    }
+    case 'quote': {
+      const q = tx(d.quote, 80);
+      return q ? { kind: 'quote', id, title: t, quote: q, speaker: tx(d.speaker, 8) || '상대', note: d.note ? tx(d.note, 30) : undefined, tone: ft(d.tone) } : null;
+    }
+    case 'checklist': {
+      const items = arr(d.items, 6).map((i) => ({ text: tx(i.text, 24), done: Boolean(i.done) })).filter((i) => i.text);
+      return items.length ? { kind: 'checklist', id, title: t, items } : null;
+    }
+    case 'compare': {
+      const rows = arr(d.rows, 5).map((r) => ({ claim: tx(r.claim, 40), fact: tx(r.fact, 50), verdict: (['match', 'mismatch', 'unknown'].includes(r.verdict) ? r.verdict : 'unknown') as 'unknown' })).filter((r) => r.claim && r.fact);
+      return rows.length ? { kind: 'compare', id, title: t, rows } : null;
+    }
+    case 'note': {
+      const text = tx(d.text, 80);
+      return text ? { kind: 'note', id, title: t || undefined, text, tone: ft(d.tone) } : null;
+    }
+  }
+  return null;
+}
+
+/** 이미 있는 종류를 아직 없는 종류로 바꾼다 (같은 내용, 다른 그림) */
+export function convertFigure(kind: string, d: any, unused: string[]): { kind: string; data: any } | null { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const items: string[] = arr(d?.items ?? d?.steps ?? d?.events ?? d?.rows, 7).map((x: any) => String(x?.text ?? x?.label ?? x?.claim ?? x ?? '')).filter(Boolean); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const text = String(d?.quote ?? d?.text ?? '').trim();
+  if (!items.length) return text ? { kind: 'note', data: { text: text.slice(0, 80), tone: d?.tone ?? 'claim' } } : null;
+  if (unused.includes('flow') && ['checklist', 'timeline', 'compare'].includes(kind)) return { kind: 'flow', data: { steps: items.map((label, i) => ({ label, state: i === 0 ? 'now' : 'next' })) } };
+  if (unused.includes('graph') && items.length >= 2) return { kind: 'graph', data: { nodes: items.map((label) => ({ id: label, label, tone: 'claim' })) } };
+  if (unused.includes('balance') && kind === 'compare') {
+    const rows = arr(d?.rows, 6) as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    return { kind: 'balance', data: { left: { title: '맞는 것', items: rows.filter((r) => r.verdict === 'match').map((r) => r.claim) }, right: { title: '다르거나 모르는 것', items: rows.filter((r) => r.verdict !== 'match').map((r) => r.claim) } } };
+  }
+  // 마지막: 한 장짜리 손글씨 메모로 (같은 모양을 두 번 그리지 않음)
+  return { kind: 'note', data: { text: items.slice(0, 3).join(' · ').slice(0, 80), tone: 'claim' } };
+}
+
+const ARRAY_KEY: Record<string, string> = { graph: 'nodes', flow: 'steps', bars: 'bars', checklist: 'items', timeline: 'events', compare: 'rows', matrix: 'cells' };
+/** 모델이 자주 틀리는 모양을 바로잡는다: 배열을 바로 주거나({items}만 다른 이름), 종류 이름을 키로 쓰는 경우 */
+export function normalizeData(kind: string, d: any): any { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const key = ARRAY_KEY[kind];
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return d; } }
+  if (!key) return d;
+  if (Array.isArray(d)) return { [key]: d };
+  if (!d || typeof d !== 'object' || Array.isArray(d[key])) return d;
+  if (kind === 'graph' && Array.isArray(d.items)) return d; // graph는 sanitize에서 따로 처리
+  const arrays = Object.keys(d).filter((k) => Array.isArray(d[k]) && k !== 'edges');
+  return arrays.length === 1 ? { ...d, [key]: d[arrays[0]!] } : d;
 }

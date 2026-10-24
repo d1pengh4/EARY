@@ -24,7 +24,13 @@ export function scrubPhones(text: string): { text: string; removed: string[] } {
     return '[번호는 기관 공식 홈페이지에서 직접 확인]';
   });
   // "(…)" 안에 지운 번호만 남은 괄호·이름 꾸밈 정리
-  return { text: out.replace(/\(\s*\[번호는 기관 공식 홈페이지에서 직접 확인\]\s*\)/g, '(번호는 기관 공식 홈페이지에서 직접 확인)'), removed };
+  // 짧은 서비스 번호(3~4자리)도 "~로/~에 신고·연락" 맥락이면 번호다 (실측: 에이전트가 지어낸 "보이스피싱 신고는 1394")
+  const out2 = out.replace(/(?<![\d,.])(1\d{2,3})(?=\s*(번|로|으로|에|,|\s*(전화|신고|연락|문의)))/g, (m) => {
+    if (OFFICIAL_NUMBERS[m]) return m;
+    removed.push(m);
+    return '[번호는 기관 공식 홈페이지에서 직접 확인]';
+  });
+  return { text: out2.replace(/\(\s*\[번호는 기관 공식 홈페이지에서 직접 확인\]\s*\)/g, '(번호는 기관 공식 홈페이지에서 직접 확인)'), removed };
 }
 
 /** 단정 표현: 이어리는 "사기다"라고 단정하지 않는다 (실측: 에이전트 메모 "보이스피싱입니다! 즉시…") */

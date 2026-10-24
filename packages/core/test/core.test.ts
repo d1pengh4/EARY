@@ -24,6 +24,11 @@ describe('L0', () => {
     expect(r.entities[0]?.key).toBe('org:서울중앙지검');
   });
 
+  test('부서명은 사람이 아니다 (실기: "전화하셔서 형사3부")', () => {
+    expect(l0.scan('검찰청 대표번호로 전화하셔서 형사3부를 찾으시면 됩니다').entities.filter((e) => e.type === 'person')).toEqual([]);
+    expect(l0.scan('형사3부 이현우 검사실입니다').entities.find((e) => e.type === 'person')?.key).toBe('person:이현우');
+  });
+
   test('STT 한 글자 오인식 허용 (실측: "서울중앙직검")', () => {
     const r = l0.scan('서울중앙직검 소속 홍길 동검사입니다');
     const org = r.entities.find((e) => e.type === 'org')!;
@@ -222,6 +227,11 @@ describe('전화번호 안전장치 (실측 회귀)', () => {
     expect(scrubPhones('서울중앙지검 공식 대표번호(02-530-3114)로 문의').text).not.toContain('530');
     expect(scrubPhones('국민건강보험공단 1577-1000').text).toContain('1577-1000');
     expect(scrubPhones('사건번호 2026형제48271호, 23만 4천원').text).toBe('사건번호 2026형제48271호, 23만 4천원');
+    // 지어낸 짧은 번호 (실측: "보이스피싱 신고는 1394, 경찰 112로")
+    const short = scrubPhones('보이스피싱 신고는 1394, 경찰 112로 즉시 연락하세요.');
+    expect(short.text).not.toContain('1394');
+    expect(short.text).toContain('112');
+    expect(scrubPhones('월 1200원 할인, 1500명 대상').text).toBe('월 1200원 할인, 1500명 대상');
   });
 });
 

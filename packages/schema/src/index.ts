@@ -179,6 +179,30 @@ export interface Review {
   stored?: { retentionDays: number };
 }
 
+// ── 캔버스 도식 (그림 모음, 2026-10-24) ─────────────────────────
+// 도식 하나하나가 자기 레이아웃을 가진 독립 그림. 캔버스는 이들을 격자로 흐르게 놓는다 → 종류를 늘려도 겹치거나 깨지지 않는다.
+export type FigTone = 'neutral' | 'claim' | 'ok' | 'warn' | 'danger' | 'info';
+export type Figure =
+  | { kind: 'stages'; id: string; title: string; stages: { label: string; hit: boolean; quote?: string; atMs?: Ms }[] }
+  | { kind: 'money'; id: string; title: string; from: string; to: string; amount?: string; via?: string; warn: boolean; note?: string }
+  | { kind: 'meter'; id: string; title: string; value: 0 | 1 | 2 | 3; labels: [string, string, string, string]; caption?: string }
+  | { kind: 'timeline'; id: string; title: string; events: { atMs: Ms; label: string; tone: FigTone; utteranceId?: string }[] }
+  | { kind: 'compare'; id: string; title: string; rows: { claim: string; fact: string; verdict: 'match' | 'mismatch' | 'unknown' }[] }
+  | { kind: 'graph'; id: string; title: string; nodes: { id: string; label: string; sub?: string; tone: FigTone; icon?: string }[]; edges: { from: string; to: string; label?: string; style: 'claim' | 'solid' | 'money' | 'warn' }[] }
+  | { kind: 'flow'; id: string; title: string; steps: { label: string; sub?: string; state: 'done' | 'now' | 'next' | 'warn' }[] }
+  | { kind: 'bars'; id: string; title: string; unit?: string; bars: { label: string; value: number; tone: FigTone; note?: string }[] }
+  | { kind: 'checklist'; id: string; title: string; items: { text: string; done: boolean; why?: string }[] }
+  | { kind: 'quote'; id: string; title: string; quote: string; speaker: string; atMs?: Ms; note?: string; tone: FigTone }
+  | { kind: 'note'; id: string; title?: string; text: string; tone: FigTone }
+  | { kind: 'radar'; id: string; title: string; axes: { label: string; value: number }[] }
+  | { kind: 'heat'; id: string; title: string; cells: { label: string; level: 0 | 1 | 2 | 3; atMs: Ms; utteranceId?: string }[] }
+  | { kind: 'bubbles'; id: string; title: string; words: { text: string; count: number; tone: FigTone }[] }
+  | { kind: 'balance'; id: string; title: string; left: { title: string; items: string[] }; right: { title: string; items: string[] } }
+  | { kind: 'tree'; id: string; title: string; root: TreeNode }
+  | { kind: 'matrix'; id: string; title: string; xLabels: [string, string]; yLabels: [string, string]; cells: { x: 0 | 1; y: 0 | 1; items: string[] }[] };
+export interface TreeNode { label: string; active?: boolean; tone?: FigTone; yes?: TreeNode; no?: TreeNode }
+export interface FigureMeta { by: 'rule' | 'agent'; updatedAtMs: Ms; rev: number }
+
 export interface Suggestion { id: string; kind: 'ask' | 'action'; text: string; why?: string; prob?: number }
 export interface ChatTurn { id: string; role: 'me' | 'ai'; text: string; atMs: Ms; done: boolean }
 
@@ -205,6 +229,8 @@ export interface CallState {
   suggestions: Suggestion[];
   chat: ChatTurn[];
   review?: Review;
+  figures: Record<string, Figure & { meta: FigureMeta }>;
+  figureOrder: string[];
   nowMs: Ms;
 }
 
@@ -225,9 +251,11 @@ export type Op =
   | { op: 'board.create'; board: Board; activate: boolean }
   | { op: 'board.patch'; boardId: string; patch: BoardPatch; atMs: Ms }
   | { op: 'board.focus'; boardId: string }
+  | { op: 'board.remove'; boardId: string }
   | { op: 'suggestions.set'; items: Suggestion[] }
   | { op: 'chat.turn'; turn: ChatTurn }
-  | { op: 'review.set'; review: Review };
+  | { op: 'review.set'; review: Review }
+  | { op: 'figure.upsert'; figure: Figure & { meta: FigureMeta } };
 
 export interface LatencySpan { name: string; utteranceId?: string; ms: number }
 

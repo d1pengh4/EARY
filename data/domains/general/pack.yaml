@@ -2,7 +2,24 @@ id: general
 label: 일반 상담
 jev: 그 외 일반 상담 (예약, 배송, 문의 등)
 gate: [time_pressure, secrecy]
-gazetteer: { org: [] }
+gazetteer:
+  # 카드사·은행·통신사: 정상 통화에서도 자주 나오는 기관 (사칭 판단과 무관, 보드에 기관으로 표시)
+  org:
+    - { canon: 신한카드, aliases: [], kind: finance }
+    - { canon: KB국민카드, aliases: [국민카드], kind: finance }
+    - { canon: 삼성카드, aliases: [], kind: finance }
+    - { canon: 현대카드, aliases: [], kind: finance }
+    - { canon: 롯데카드, aliases: [], kind: finance }
+    - { canon: 우리카드, aliases: [], kind: finance }
+    - { canon: 하나카드, aliases: [], kind: finance }
+    - { canon: BC카드, aliases: [비씨카드], kind: finance }
+    - { canon: KB국민은행, aliases: [국민은행], kind: finance }
+    - { canon: 신한은행, aliases: [], kind: finance }
+    - { canon: 우리은행, aliases: [], kind: finance }
+    - { canon: 하나은행, aliases: [], kind: finance }
+    - { canon: NH농협은행, aliases: [농협은행, 농협], kind: finance }
+    - { canon: 카카오뱅크, aliases: [], kind: finance }
+    - { canon: 토스뱅크, aliases: [], kind: finance }
 patterns:
   amount: "((?:\\d+(?:,\\d{3})*(?:만|천)?)+)원(정도|가량|쯤)?"   # "23만 4천원", "118,000원", "12만 원 정도"
   date: "(\\d{1,2})월(\\d{1,2})일|(다음|이번)주(중)?|(내일|모레)"   # "오늘"은 "오늘 안에"(시간 압박)와 겹쳐 잡음이 돼서 뺐다

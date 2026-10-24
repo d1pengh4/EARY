@@ -77,6 +77,13 @@ describe('impersonation-01 (결정론)', () => {
     expect(s.situation.text).toBe('상대가 송금과 인증번호 전달을 직접 요구하고 있어요');
     expect(s.suggestions[0]?.id).toBe('dont_transfer');
     expect(s.risk.history.map((x) => x.level)).toEqual(['caution', 'accumulating', 'final']);
+    // 캔버스 도식: 상황에 맞는 여러 종류가 규칙으로 즉시 그려진다
+    const kinds = s.figureOrder.map((id) => s.figures[id]!.kind);
+    expect(kinds).toEqual(expect.arrayContaining(['meter', 'stages', 'money', 'quote', 'timeline', 'compare', 'radar', 'heat', 'bubbles', 'balance', 'tree', 'checklist']));
+    const stages = s.figures.stages!;
+    expect(stages.kind === 'stages' && stages.stages.filter((x) => x.hit).length).toBe(5);
+    const tree = s.figures.tree!;
+    expect(tree.kind === 'tree' && tree.root.yes?.active).toBe(true);
     console.log('단계별:', seen, '\n신호:', s.risk.activeCategories.join(', '));
   }, 20000);
 });
@@ -214,5 +221,48 @@ describe('발언 고치기 (디자인 12번)', () => {
     expect([u.speaker, u.label, u.speakerSource, u.status]).toEqual(['me', '나', 'user', 'final']);
     expect(h.session.state.risk.activeCategories).not.toContain('money_transfer');
     expect(h.session.state.risk.level).toBe('none');
+  });
+});
+
+describe('화자 바꾸기로 바로잡으면 지도·신호도 정리된다 (실기 회귀)', () => {
+  test('요구 카드·공식 안내 대조 신호가 사라지고 상황 문장도 내려간다', async () => {
+    const h = harness();
+    h.session.start('type');
+    h.session.onFinal('t1', 'other', '서울중앙지검 홍길동 검사입니다. 본인 명의 계좌가 범죄에 연루됐습니다.', 0, 1000);
+    await settle();
+    h.session.onFinal('t2', 'other', '지금 바로 이체하셔야 하나요?', 2000, 3000);
+    await settle();
+    h.session.onFinal('t3', 'other', '외부에 말씀하시면 안 됩니다.', 4000, 5000);
+    await settle();
+    expect(h.session.state.risk.level).toBe('final');
+    h.session.handle({ t: 'utterance.speaker', utteranceId: 't2', speaker: 'me' });
+    await settle();
+    const s = h.session.state;
+    expect(s.risk.activeCategories).not.toContain('money_transfer');
+    expect(s.risk.activeCategories).not.toContain('official_mismatch');
+    expect(Object.keys(s.boards['board:impersonation.entityMap']!.els).filter((k) => k.startsWith('demand:'))).toEqual([]);
+    expect(s.situation.text).not.toContain('요구하고 있어요');
+    // 다시 요구가 나오면 빈 첫 칸에 그린다 (겹침 없음)
+    h.session.onFinal('t4', 'other', '문자로 가는 인증번호를 불러주세요.', 6000, 7000);
+    await settle();
+    const p = s.boards['board:impersonation.entityMap'] && h.session.state.boards['board:impersonation.entityMap']!.placed['demand:credential_request'];
+    expect(p?.y).toBe(494);
+  });
+});
+
+describe('발언 고치기로 사건번호를 바로잡으면 지도도 바뀐다 (실기 회귀)', () => {
+  test('틀린 사건 카드는 지워지고 고친 번호가 사건 슬롯에', async () => {
+    const h = harness();
+    h.session.start('type');
+    h.session.onFinal('t1', 'other', '서울중앙지검 홍길동 검사입니다.', 0, 1000);
+    h.session.onFinal('t2', 'other', '사건번호는 2026 현제 4만 8270호입니다.', 2000, 3000);
+    await settle();
+    h.session.handle({ t: 'utterance.edit', utteranceId: 't2', text: '사건번호는 2026형제48271호입니다.' });
+    await settle();
+    const s = h.session.state;
+    expect(Object.keys(s.entities).filter((k) => k.startsWith('case:'))).toEqual(['case:2026형제48271']);
+    const b = s.boards['board:impersonation.entityMap']!;
+    expect(b.els['card:case:2026형제48270']).toBeUndefined();
+    expect(b.placed['card:case:2026형제48271']).toMatchObject({ x: 352, y: 194 });
   });
 });

@@ -6,6 +6,7 @@ import { warningHeadline, withParticle } from '@eary/core';
 import { enrollVoice, goHome, startCall, stopCall } from './calls';
 import { ReviewArea } from './Review';
 import { CanvasLog } from './CanvasLog';
+import { CanvasFigures, FigureBoundary } from './Figures';
 import { EvidenceView, evidenceCount } from './Evidence';
 import { DevPanel } from './DevPanel';
 import { useStore } from './store';
@@ -103,7 +104,7 @@ function MainArea() {
   const board = s.activeBoardId ? s.boards[s.activeBoardId] : undefined;
   const showWarning = s.risk.level === 'final' && s.risk.finalWarning && !s.risk.finalWarning.dismissed;
 
-  const [view, setView] = useState<'board' | 'evidence'>('board');
+  const [view, setView] = useState<'board' | 'evidence' | 'figures'>('board');
   // 새 통화·처음 화면이 되면 보던 탭(공식 근거 등)을 되돌린다 (실기: 로고로 홈에 가도 빈 근거 화면이 남았다)
   useEffect(() => { setView('board'); }, [s.callId, s.phase]);
   useEffect(() => { const on = () => setView('evidence'); window.addEventListener('eary:evidence', on); return () => window.removeEventListener('eary:evidence', on); }, []);
@@ -124,10 +125,11 @@ function MainArea() {
               </button>
             );
           })}
+          {s.figureOrder.length > 0 && <button type="button" role="tab" aria-selected={view === 'figures'} className={`tab${view === 'figures' ? ' tab-on' : ''}`} onClick={() => setView('figures')}>캔버스 {s.figureOrder.length}</button>}
           {evN > 0 && <button type="button" role="tab" aria-selected={view === 'evidence'} className={`tab${view === 'evidence' ? ' tab-on' : ''}`} onClick={() => setView('evidence')}>공식 근거 {evN}</button>}
         </div>
       )}
-      {view === 'evidence' ? <EvidenceView /> : showWarning ? <FinalWarning /> : (
+      {view === 'evidence' ? <EvidenceView /> : view === 'figures' ? <><NextAction /><FigureBoundary label="canvas"><CanvasFigures /></FigureBoundary></> : showWarning ? <FinalWarning /> : (
         <>
           <NextAction />
           {board ? (board.templateId === 'canvas' ? <CanvasLog board={board} /> : <Board board={board} />) : <EmptyBoard />}

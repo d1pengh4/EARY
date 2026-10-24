@@ -8,7 +8,7 @@ export function initialState(callId: string, mode: Mode = 'replay-fixture'): Cal
     callId, mode, phase: 'idle', consentNotified: false, domain: 'unknown', domainConfidence: 0,
     situation: { text: '통화를 기다리는 중', rev: 0 },
     utterances: {}, utteranceOrder: [], entities: {}, claims: {}, evidence: {}, signals: {},
-    risk: EMPTY_RISK, boards: {}, boardOrder: [], suggestions: [], chat: [], nowMs: 0,
+    risk: EMPTY_RISK, boards: {}, boardOrder: [], suggestions: [], chat: [], figures: {}, figureOrder: [], nowMs: 0,
   };
 }
 
@@ -48,6 +48,12 @@ export function applyOp(s: CallState, op: Op): CallState {
     case 'board.create':
       if (s.boards[op.board.id]) return s;
       return { ...s, boards: { ...s.boards, [op.board.id]: op.board }, boardOrder: [...s.boardOrder, op.board.id], activeBoardId: op.activate || !s.activeBoardId ? op.board.id : s.activeBoardId };
+    case 'board.remove': {
+      if (!s.boards[op.boardId]) return s;
+      const { [op.boardId]: _gone, ...boards } = s.boards;
+      const boardOrder = s.boardOrder.filter((id) => id !== op.boardId);
+      return { ...s, boards, boardOrder, activeBoardId: s.activeBoardId === op.boardId ? boardOrder[0] : s.activeBoardId };
+    }
     case 'board.patch': {
       const b = s.boards[op.boardId];
       if (!b) return s;
@@ -57,6 +63,10 @@ export function applyOp(s: CallState, op: Op): CallState {
       return s.boards[op.boardId] ? { ...s, activeBoardId: op.boardId } : s;
     case 'suggestions.set':
       return { ...s, suggestions: op.items };
+    case 'figure.upsert': {
+      const has = Boolean(s.figures[op.figure.id]);
+      return { ...s, figures: { ...s.figures, [op.figure.id]: op.figure }, figureOrder: has ? s.figureOrder : [...s.figureOrder, op.figure.id] };
+    }
     case 'review.set':
       return { ...s, review: op.review };
     case 'chat.turn': {
