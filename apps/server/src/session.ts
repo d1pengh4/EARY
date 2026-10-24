@@ -49,7 +49,7 @@ export interface Deps {
 
 const CHANNELS: Speaker[] = ['me', 'other']; // 바이너리 프레임 첫 바이트: 0 = 나(마이크), 1 = 상대(탭/시스템 오디오), 2 = 목소리 등록
 const ENROLL_CH = 2;
-const MONO_MAX_BYTES = 16000 * 2 * 60 * 15; // 마이크 하나 모드 원음 보관 한도 15분 (화자 판단용, 저장하지 않음)
+const MONO_KEEP_BYTES = 16000 * 2 * 60 * 3; // 마이크 하나 모드 원음은 최근 3분만 메모리에 (화자 판단용, 저장하지 않음)
 const CHUNK_BYTES = (SAMPLE_RATE * 2) / 10; // 100ms
 
 const LOG_KEEP = 5000;
@@ -81,6 +81,9 @@ export class CallSession {
   private mono = false;
   private monoChunks: Uint8Array[] = [];
   private monoBytes = 0;
+  /** 버린 앞부분 바이트 수, 현재 STT 스트림이 시작된 위치(통화 처음부터 바이트) — 스트림이 끊겨 다시 열리면 RTZR 시각이 0부터 다시 센다 */
+  private monoDropped = 0;
+  private monoStreamBase = 0;
   private enrollChunks: Uint8Array[] = [];
   private speakerModel: SpeakerModel = {};
   private uttFeat = new Map<string, VoiceFeat>();
@@ -243,7 +246,7 @@ export class CallSession {
         break;
       case 'call.start':
         this.mono = msg.mode === 'live' && msg.audio === 'mono';
-        this.monoChunks = []; this.monoBytes = 0; this.uttFeat.clear();
+        this.monoChunks = []; this.monoBytes = 0; this.monoDropped = 0; this.monoStreamBase = 0; this.uttFeat.clear();
         this.start(msg.mode, msg.scenarioId, msg.consentNotified, msg.callerNumber, msg.speed);
         break;
       case 'voice.enroll':
@@ -369,8 +372,10 @@ export class CallSession {
     if (this.mono) {
       // 마이크 하나: 스트림 하나로 보내고, 확정 자막 구간의 원음으로 화자를 판단한다
       const pcm = frame.slice(1);
-      if (this.monoBytes < MONO_MAX_BYTES) { this.monoChunks.push(pcm); this.monoBytes += pcm.length; }
+      // 스트림을 먼저 (다시 열리면 이 조각이 새 스트림의 0초) → 그다음 원음 보관
       this.stream('me').push(pcm);
+      this.monoChunks.push(pcm); this.monoBytes += pcm.length;
+      while (this.monoBytes > MONO_KEEP_BYTES && this.monoChunks.length > 1) { const c = this.monoChunks.shift()!; this.monoBytes -= c.length; this.monoDropped += c.length; }
       return;
     }
     const speaker = CHANNELS[frame[0]!];
@@ -391,8 +396,10 @@ export class CallSession {
   /** RTZR 구간(ms) → 그 구간 원음 → 화자 추정 */
   private monoSpeaker(id: string, startAt: number, duration: number, text: string): { speaker: Speaker; confidence: number } {
     const all = concatPcm(this.monoChunks);
-    const from = Math.max(0, Math.floor((startAt / 1000) * 16000));
-    const to = Math.min(all.length, Math.ceil(((startAt + duration) / 1000) * 16000));
+    // 보관 버퍼 기준 샘플 위치 = 스트림 시작 위치 + RTZR 시각 − 버린 앞부분
+    const base = (this.monoStreamBase - this.monoDropped) / 2;
+    const from = Math.max(0, Math.floor(base + (startAt / 1000) * 16000));
+    const to = Math.min(all.length, Math.ceil(base + ((startAt + duration) / 1000) * 16000));
     const f = voiceFeatures(all.subarray(from, to));
     this.uttFeat.set(id, f);
     const g = guessSpeaker(f, this.speakerModel);
@@ -417,6 +424,7 @@ export class CallSession {
     if (cur && !cur.closed) return cur;
     const callId = this.state.callId;
     this.streamOffset[speaker] = this.now();
+    if (speaker === 'me') this.monoStreamBase = this.monoDropped + this.monoBytes;
     const st = new RtzrStream(this.d.rtzr, {
       onResult: (r) => this.state.callId === callId && this.onRtzr(speaker, r),
       onClose: (code, reason) => { if (code !== 1000) console.warn('[rtzr]', speaker, code, reason); },
@@ -605,6 +613,9 @@ export class CallSession {
       // 투표: D1 ≥ .85 단독 확정, .5~.85는 L0가 같이 잡았을 때만 (§9)
       if (p >= 0.85 || (p >= 0.5 && cur)) {
         this.emit({ op: 'signal.upsert', s: { id: sid, category: cat, label: SIGNAL_LABEL[cat], origin: [...new Set([...(cur?.origin ?? []), 'D1' as const])], confirmed: true, confidence: Math.max(p, cur?.confidence ?? 0), d1Prob: p, sources: cur?.sources ?? [src], explanation: cur?.explanation ?? `‘${u.text}’`, active: true } });
+      } else if (cur && !cur.confirmed && cur.confidence >= 0.85 && p >= 0.25) {
+        // 강한 규칙 신호(송금·인증정보 등)는 D1이 분명히 부정할 때만 버린다 (실기: 길고 잡음 많은 실제 녹음에서 D1이 낮게 봐 "신분증 사진 보내줘"가 사라짐)
+        this.emit({ op: 'signal.upsert', s: { ...cur, confirmed: true, d1Prob: p } });
       } else if (cur) {
         this.emit({ op: 'signal.upsert', s: { ...cur, d1Prob: p } });
       }

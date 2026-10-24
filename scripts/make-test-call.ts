@@ -1,0 +1,68 @@
+// 혼자 테스트용 "가짜 상대방": 상대 대사를 macOS TTS(유나)로 녹음해 apps/web/public/test-call/에 둔다.
+// 사용: bun scripts/make-test-call.ts → 웹 빌드 → http://localhost:8787/test-call/ 을 다른 탭에서 열고 PC 통화 모드로 그 탭 소리를 공유
+import { $ } from 'bun';
+import { join } from 'node:path';
+
+type Line = ['상대' | '나', string];
+const SCRIPTS: { id: string; title: string; expect: string; voice: string; lines: Line[] }[] = [
+  { id: 'prosecutor', title: '검찰 사칭', expect: '주의 → 누적 → 최종 경고, 사건 지도, 사기 단계 5개, 돈 흐름, 레이더', voice: 'Reed', lines: [
+    ['상대', '여보세요, 서울중앙지검 김민수 수사관입니다. 본인 맞으시죠?'],
+    ['나', '네, 맞는데요. 무슨 일이세요?'],
+    ['상대', '본인 명의 계좌가 금융범죄 사건에 연루돼서 연락드렸습니다. 사건번호는 2026형제48271호입니다.'],
+    ['나', '네? 저는 그런 적 없는데요.'],
+    ['상대', '지금부터 통화 내용은 녹취로 진행됩니다. 아직 언론에 보도가 안 된 사건이라 제3자에게 알리시면 안 됩니다.'],
+    ['상대', '가족한테도 말씀하시면 안 되고요, 오늘 안에 처리하셔야 합니다.'],
+    ['나', '그럼 어떻게 해야 하는데요?'],
+    ['상대', '자산 보호를 위해서 안전계좌로 잔액을 옮기셔야 합니다. 지금 바로 진행하세요.'],
+    ['상대', '그리고 확인 절차상 문자로 가는 인증번호 불러주세요.'],
+  ] },
+  { id: 'family', title: '가족 사칭', expect: '"가족 자칭" 단계, 원래 번호로 다시 걸기, 둘만 아는 질문, 요금 탭 없음', voice: 'Yuna', lines: [
+    ['상대', '엄마 나야, 휴대폰이 고장 나서 친구 폰으로 전화했어.'],
+    ['나', '어 그래? 목소리가 좀 이상한데.'],
+    ['상대', '감기 걸려서 그래. 급하게 결제할 게 있는데 200만 원만 보내줄 수 있어?'],
+    ['상대', '아빠한테는 말하지 말고 지금 바로 보내줘.'],
+    ['나', '네 계좌로 보내면 안 돼?'],
+    ['상대', '내 계좌는 정지돼서 친구 계좌로 보내줘야 해. 그리고 엄마 신분증 사진도 좀 찍어서 보내줘.'],
+  ] },
+  { id: 'parcel', title: '택배 사기', expect: '"회사 자칭" 단계, 인증정보 요구 경고', voice: 'Eddy', lines: [
+    ['상대', '여기 CJ대한통운인데요, 고객님 택배가 주소 불명으로 반송 대기 중입니다.'],
+    ['나', '네? 주문한 게 없는데요.'],
+    ['상대', '문자로 보내드린 링크를 눌러서 주소 다시 입력하시고 재배송비 3천 원 결제해 주세요.'],
+    ['상대', '오늘 안 하시면 폐기 처리됩니다.'],
+    ['상대', '결제하실 때 카드번호랑 인증번호 입력하시면 됩니다.'],
+  ] },
+  { id: 'billing', title: '정상 요금 상담', expect: '위험 없음, 다시 걸기·저울 없음, 막대 2개(내 요금 vs 상담원 요금)', voice: 'Yuna', lines: [
+    ['상대', '안녕하세요, SK텔레콤 고객센터 상담사 이수진입니다.'],
+    ['나', '요금제 좀 바꾸고 싶어서요. 지금 월 6만 9천 원 내고 있어요.'],
+    ['상대', '네 고객님, 데이터 사용량 보면 월 4만 9천 원 요금제로 바꾸셔도 충분합니다.'],
+    ['상대', '약정 기간이 8개월 남아서 위약금이 3만 2천 원 정도 발생합니다.'],
+    ['나', '그럼 1년 쓰면 얼마나 아끼는 거예요?'],
+    ['상대', '월 2만 원씩 절약되니까 위약금 빼도 1년에 20만 원 넘게 아끼십니다.'],
+  ] },
+  { id: 'real-prosecutor', title: '진짜 검사 연락', expect: '위험 없음 또는 주의, 본인 확인 안 됨, 확인 방법 카드, 최종 경고 없음', voice: 'Reed', lines: [
+    ['상대', '안녕하세요, 서울중앙지검 형사부 박지훈 검사실 수사관입니다.'],
+    ['나', '네, 무슨 일이시죠?'],
+    ['상대', '지난달 접수하신 고소 사건 관련해서 진술 일정 잡으려고 연락드렸습니다.'],
+    ['상대', '의심되시면 검찰청 대표번호로 직접 전화하셔서 저희 검사실 찾으셔도 됩니다.'],
+    ['나', '언제 가면 되나요?'],
+    ['상대', '다음 주 중에 편하신 날로 조정 가능하고요, 방문하실 때 신분증만 챙겨 오시면 됩니다. 저희는 전화로 돈이나 비밀번호를 절대 요구하지 않습니다.'],
+  ] },
+];
+
+const out = join(import.meta.dir, '../apps/web/public/test-call');
+const manifest = [];
+for (const s of SCRIPTS) {
+  const lines = [];
+  for (const [i, [who, text]] of s.lines.entries()) {
+    if (who === '나') { lines.push({ who, text }); continue; }
+    const name = `${s.id}-${i}`;
+    const aiff = join(out, `${name}.aiff`);
+    await $`say -v ${s.voice} -r 185 -o ${aiff} ${text}`.quiet();
+    await $`afconvert -f m4af -d aac ${aiff} ${join(out, `${name}.m4a`)}`.quiet();
+    await $`rm ${aiff}`.quiet();
+    lines.push({ who, text, audio: `${name}.m4a` });
+  }
+  manifest.push({ id: s.id, title: s.title, expect: s.expect, lines });
+}
+await Bun.write(join(out, 'scripts.json'), JSON.stringify(manifest, null, 1));
+console.log(`${manifest.length}편, 상대 대사 ${manifest.flatMap((m) => m.lines).filter((l) => l.audio).length}개 → ${out}`);

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>가짜 상대방</title>
+<style>
+  :root { --ink: #1d1d1b; --muted: #6b6b66; --bg: #f4f2ec; --card: #fff; --line: #dedad0; --blue: #2c5be0; --blue-box: #e9eefc; --red: #c8352b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 -apple-system, "Apple SD Gothic Neo", "Pretendard", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .help { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  .help b { color: var(--ink); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .tabs button { border: 1.5px solid var(--line); background: var(--card); border-radius: 999px; padding: 8px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  .tabs button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+  .expect { font-size: 13.5px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .controls button { font: inherit; font-weight: 700; border: 2px solid var(--ink); border-radius: 10px; padding: 9px 16px; background: var(--card); cursor: pointer; }
+  .controls button.primary { background: var(--ink); color: #fff; }
+  .controls label { font-size: 14px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  li { background: var(--card); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: baseline; transition: border-color .2s, background .2s; }
+  li .who { font-size: 13px; font-weight: 700; color: var(--muted); }
+  li.me .who { color: var(--blue); }
+  li.done { opacity: .45; }
+  li.now { border-color: var(--ink); box-shadow: 0 0 0 4px rgba(29,29,27,.08); opacity: 1; }
+  li.now.me { border-color: var(--blue); background: var(--blue-box); }
+  li.now.me .text { font-size: 19px; font-weight: 700; }
+  li.now.me .text::after { content: "  ← 지금 읽고 스페이스"; font-size: 13px; font-weight: 600; color: var(--blue); }
+  li.now.other .text::after { content: "  ◀ 재생 중"; font-size: 13px; color: var(--red); }
+  .status { font-size: 14px; color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>가짜 상대방</h1>
+  <p class="help">
+    혼자 테스트용 페이지예요. ① 이 탭을 열어 둔 채 이어리에서 <b>PC 통화</b>로 시작하고, 공유할 탭으로 <b>이 탭</b>을 고르세요(탭 오디오 공유 켜기).
+    ② 아래에서 대본을 고르고 <b>시작</b>. 상대 대사는 자동 재생되고, 파란 줄이 뜨면 <b>마이크에 읽은 뒤 스페이스</b>(또는 다음)를 누르세요.
+  </p>
+  <div class="tabs" id="tabs"></div>
+  <div class="expect" id="expect"></div>
+  <div class="controls">
+    <button class="primary" id="start">시작</button>
+    <button id="next">다음 (스페이스)</button>
+    <button id="stop">멈춤</button>
+    <label><input type="checkbox" id="auto" /> 내 차례도 자동으로 넘기기</label>
+    <span class="status" id="status">대기 중</span>
+  </div>
+  <ol id="lines"></ol>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let scripts = [], cur = 0, step = -1, running = false, waiter = null, audio = null;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitNext = (ms) => new Promise((r) => { waiter = r; if (ms) setTimeout(r, ms); });
+
+  function render() {
+    const s = scripts[cur];
+    $('tabs').innerHTML = '';
+    scripts.forEach((x, i) => {
+      const b = document.createElement('button');
+      b.textContent = `${i + 1}. ${x.title}`;
+      b.setAttribute('aria-pressed', String(i === cur));
+      b.onclick = () => { stop(); cur = i; step = -1; render(); };
+      $('tabs').append(b);
+    });
+    $('expect').textContent = `기대 결과: ${s.expect}`;
+    $('lines').innerHTML = '';
+    s.lines.forEach((l, i) => {
+      const li = document.createElement('li');
+      li.className = `${l.who === '나' ? 'me' : 'other'}${i < step ? ' done' : ''}${i === step ? ' now' : ''}`;
+      li.innerHTML = `<span class="who">${l.who}</span><span class="text"></span>`;
+      li.querySelector('.text').textContent = l.text;
+      $('lines').append(li);
+      if (i === step) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
+  function play(src) {
+    return new Promise((resolve) => {
+      audio = new Audio(src);
+      audio.onended = resolve; audio.onerror = resolve;
+      audio.play().catch(resolve);
+    });
+  }
+
+  async function run() {
+    if (running) return;
+    running = true;
+    const s = scripts[cur];
+    for (step = 0; step < s.lines.length && running; step++) {
+      render();
+      const l = s.lines[step];
+      if (l.audio) {
+        $('status').textContent = '상대가 말하는 중';
+        await play(l.audio);
+        await sleep(1200); // 자막 확정 여유
+      } else {
+        $('status').textContent = '내 차례 — 읽고 스페이스';
+        await waitNext($('auto').checked ? 2500 + l.text.length * 220 : 0);
+        await sleep(600);
+      }
+    }
+    if (running) { step = s.lines.length; render(); $('status').textContent = '끝 — 이어리 화면을 확인하세요'; }
+    running = false;
+  }
+
+  function stop() {
+    running = false;
+    if (audio) { audio.pause(); audio = null; }
+    if (waiter) { waiter(); waiter = null; }
+    $('status').textContent = '멈춤';
+  }
+
+  $('start').onclick = () => { stop(); step = -1; setTimeout(run, 50); };
+  $('next').onclick = () => { if (waiter) { waiter(); waiter = null; } };
+  $('stop').onclick = stop;
+  addEventListener('keydown', (e) => { if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); $('next').click(); } });
+
+  fetch('scripts.json').then((r) => r.json()).then((x) => { scripts = x; render(); });
+</script>
+</body>
+</html>

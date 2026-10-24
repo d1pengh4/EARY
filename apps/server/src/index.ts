@@ -82,7 +82,7 @@ const server = Bun.serve<WsData>({
       return (await f.exists()) ? new Response(f, { headers: { 'Content-Type': 'audio/wav' } }) : new Response('not found', { status: 404 });
     }
     // 빌드된 웹앱 (개발 중에는 Vite dev server가 /ws를 프록시)
-    const file = Bun.file(join(WEB_DIST, url.pathname === '/' ? 'index.html' : url.pathname));
+    const file = Bun.file(join(WEB_DIST, url.pathname === '/' ? 'index.html' : url.pathname.endsWith('/') ? `${decodeURIComponent(url.pathname)}index.html` : decodeURIComponent(url.pathname)));
     if (await file.exists()) return new Response(file);
     const index = Bun.file(join(WEB_DIST, 'index.html'));
     return (await index.exists()) ? new Response(index) : new Response('web 빌드 없음: bun run dev:web 으로 개발 서버를 쓰세요', { status: 404 });
