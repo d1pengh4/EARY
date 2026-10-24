@@ -1,7 +1,7 @@
 // 통화 세션 = 서버가 원본 상태를 갖는 이벤트 로그 + 파이프라인 오케스트레이터. (§6, §7, §8.10, §9)
 // 규칙: 시나리오 이름으로 분기하지 않는다. 모든 판단은 상태와 도메인 팩으로만 한다. (§14)
 import {
-  applyOp, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
+  applyOp, gridCell, route, soften, warningHeadline, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
   type BoardTemplate, type DomainPack, type L0Engine, type Packs,
 } from '@eary/core';
 import {
@@ -25,6 +25,8 @@ const PROVISIONAL_TTL_MS = 1500;
 const PROSECUTION_TITLES = new Set(['검사', '수사관', '검찰수사관', '형사', '조사관']);
 const BATCH_MS = 16;
 const CANVAS_ID = 'board:canvas';
+const CASE_MAP = 'board:impersonation.entityMap';
+const clockOf = (ms: number) => { const t = Math.floor(ms / 1000); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')} 발언`; };
 const KIND_KO: Record<string, string> = { org: '기관', person: '인물', case: '사건', account: '나', amount: '금액', date: '일정', duration: '기간', condition: '조건', demand: '요구', product: '상품' };
 const GROWING_TYPES = new Set<Entity['type']>(['case', 'amount', 'duration', 'date']);
 const FORMATTED_TYPES = GROWING_TYPES;
@@ -113,7 +115,11 @@ export class CallSession {
   }
 
   private canvasApply(patches: BoardPatch[]) {
-    for (const patch of patches) this.emit({ op: 'board.patch', boardId: CANVAS_ID, patch, atMs: this.now() });
+    for (const patch of patches) {
+      this.emit({ op: 'board.patch', boardId: CANVAS_ID, patch, atMs: this.now() });
+      // 에이전트 메모(메모·주의)는 사건 지도에도 손글씨로 올린다
+      if ('add' in patch) for (const el of patch.add.els) if (el.kind === 'item' && el.section === 'sec:think' && (el.label === '메모' || el.label === '주의')) this.caseMapAgentNote(el.value);
+    }
   }
 
   private ensureCanvas() {
@@ -818,6 +824,67 @@ export class CallSession {
     this.afterChange();
   }
 
+  /** 위험 신호가 생기면 도메인과 상관없이 사건 지도를 연다 (대출·택배·가족 사칭 등도 그림으로) */
+  private ensureCaseMap() {
+    if (this.state.risk.level === 'none' || this.state.boards[CASE_MAP]) return;
+    const tpl = this.d.packs.templates['impersonation.entityMap'];
+    if (!tpl) return;
+    const active = this.state.activeBoardId ? this.state.boards[this.state.activeBoardId] : undefined;
+    this.openBoard(tpl, !active || active.templateId === 'general.facts' || active.templateId === 'canvas');
+  }
+
+  /** 사건 지도 고도화: 요구 카드(→ 나), 범례 손글씨. 상태에서 결정론적으로 다시 계산해 달라진 것만 보낸다 */
+  private syncCaseMapExtras() {
+    const b = this.state.boards[CASE_MAP];
+    const tpl = this.d.packs.templates['impersonation.entityMap'];
+    if (!b || !tpl) return;
+    const now = this.now();
+    const put = (el: BoardEl, at: { x: number; y: number; w: number; h: number }) => {
+      const cur = this.state.boards[CASE_MAP]!.els[el.id];
+      if (!cur) this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { add: { els: [el], placed: [{ id: el.id, ...at }] } }, atMs: now }, { op: 'board.patch', boardId: CASE_MAP, patch: { badge: { id: el.id, text: '방금 추가', untilMs: now + 4000 } }, atMs: now });
+      else if (JSON.stringify(cur) !== JSON.stringify(el)) this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { update: { id: el.id, fields: el } }, atMs: now });
+    };
+    // ① 요구 카드: 확정된 행동 신호(송금·인증정보·앱 설치)를 처음 나온 순서대로
+    const zone = tpl.zones.demands!;
+    const first = new Map<SignalCategory, RiskSignal>();
+    for (const sg of Object.values(this.state.signals).filter((x) => x.active && x.confirmed && ACTION_CATEGORIES.includes(x.category)).sort((x, y) => (x.sources[0]?.startMs ?? 0) - (y.sources[0]?.startMs ?? 0))) if (!first.has(sg.category)) first.set(sg.category, sg);
+    for (const sg of [...first.values()].slice(0, 3)) {
+      const u = this.state.utterances[sg.sources[0]?.utteranceId ?? ''];
+      const id = `demand:${sg.category}`;
+      const cur = this.state.boards[CASE_MAP]!.placed[id];
+      // 위치는 처음 놓일 때 정한다: 이미 그려진 요구 카드 수 = 다음 칸 (나중에 순서가 바뀌어도 겹치지 않게)
+      const at = cur ?? gridCell(zone, Object.keys(this.state.boards[CASE_MAP]!.els).filter((k) => k.startsWith('demand:')).length);
+      put({ kind: 'card', id, zone: 'demands', label: '요구', value: sg.label, sub: u ? clockOf(u.startMs) : undefined, pills: [], style: 'demand', sources: sg.sources }, at);
+    }
+    // 계좌 언급이 없는 사기(앱 설치 등)에서도 요구가 가리킬 "나" 카드를 둔다
+    const slotMe = tpl.slots.me_account!;
+    const hasAccount = Boolean(this.state.boards[CASE_MAP]!.els['card:account:me']);
+    if (first.size && !hasAccount) put({ kind: 'card', id: 'card:me', zone: 'slot', label: '나', value: '전화를 받은 나', pills: [], style: 'me', sources: [] }, { x: slotMe.x, y: slotMe.y, w: slotMe.w, h: slotMe.h });
+    const accId = hasAccount ? 'card:account:me' : 'card:me';
+    const acc = this.state.boards[CASE_MAP]!.placed[accId];
+    const d0 = this.state.boards[CASE_MAP]!.placed[`demand:${[...first.keys()][0]}`];
+    if (acc && d0 && !this.state.boards[CASE_MAP]!.edges['edge:demands->me']) {
+      const g = route(d0, acc);
+      this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { edges: [{ id: 'edge:demands->me', from: `demand:${[...first.keys()][0]}`, to: accId, kind: 'claim', label: '나에게 요구', path: g.path, labelAt: { x: g.labelAt.x + 4, y: g.labelAt.y } }] }, atMs: now });
+    }
+    // ② 범례: 점선(주장) 카드가 하나라도 생기면 (디자인 2번의 "점선 = 아직 확인 전인 주장")
+    const hasClaimed = Object.values(this.state.boards[CASE_MAP]!.els).some((e) => e.kind === 'card' && e.style === 'claimed');
+    if (hasClaimed) put({ kind: 'hand', id: 'hand:legend', zone: 'legend', text: '점선 = 아직 확인 전인 주장', sources: [] }, tpl.zones.legend!);
+  }
+
+  /** 에이전트가 남긴 핵심 메모를 사건 지도 손글씨로 (가장 최근 1개) */
+  private caseMapAgentNote(text: string) {
+    const tpl = this.d.packs.templates['impersonation.entityMap'];
+    const b = this.state.boards[CASE_MAP];
+    if (!b || !tpl) return;
+    const safe = soften(text);
+    if (!safe) return;
+    const el: BoardEl = { kind: 'hand', id: 'hand:agent', zone: 'agent', text: safe.length > 44 ? `${safe.slice(0, 42)}…` : safe, sources: [] };
+    const now = this.now();
+    if (!b.els[el.id]) this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { add: { els: [el], placed: [{ id: el.id, ...tpl.zones.agent! }] } }, atMs: now });
+    else this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { update: { id: el.id, fields: el } }, atMs: now }, { op: 'board.patch', boardId: CASE_MAP, patch: { badge: { id: el.id, text: '방금 갱신', untilMs: now + 4000 } }, atMs: now });
+  }
+
   /** 요금 상담 보드(디자인 5·11번): 상태가 바뀔 때마다 다시 계산해서 달라진 요소만 보낸다 */
   private syncBillingBoard() {
     const b = this.state.boards['board:billing.compare'];
@@ -868,6 +935,10 @@ export class CallSession {
     this.autoSearch();
     this.syncBillingBoard();
     this.recomputeRisk(false);
+    // 위험 단계를 계산한 뒤에 연다 (마지막 발화에서 처음 위험이 생기는 경우를 놓치지 않게)
+    this.ensureCaseMap();
+    this.syncCaseMapExtras();
+    this.refreshSignalSummary();
     this.refreshTags();
     this.refreshSuggestions();
     const text = this.situationText();
@@ -925,11 +996,19 @@ export class CallSession {
     const catalog = this.suggestionCatalog();
     const ids = new Set(catalog.map((s) => s.id));
     const kept = this.state.suggestions.filter((s) => ids.has(s.id));
-    // 최종 경고 요구가 생기면 그 행동 안내를 맨 앞에
-    const urgent = catalog.find((s) => s.id === 'dont_transfer');
-    let items = kept.length ? kept : catalog.slice(0, 2);
-    if (urgent && items[0]?.id !== urgent.id) items = [urgent, ...items.filter((s) => s.id !== urgent.id)].slice(0, 2);
-    if (items.map((s) => s.id).join() !== this.state.suggestions.map((s) => s.id).join()) this.emit({ op: 'suggestions.set', items });
+    // 행동 요구(송금·인증정보·앱 설치)가 생기면 그 요구에 맞는 안내를 맨 앞에 (도메인과 상관없이)
+    // 실기: 앱 설치 사기에 "송금하거나 인증번호를… 수사기관은…"이 떠서 상황과 안 맞았다
+    const actions = this.confirmedCategories().filter((c) => ACTION_CATEGORIES.includes(c));
+    const org = Object.values(this.state.entities).find((e) => e.type === 'org' && e.certainty !== 'provisional');
+    const lawEnf = ['prosecution', 'police'].includes(org?.attrs.kind ?? '');
+    const urgent: Suggestion | undefined = actions.length ? {
+      id: 'dont_transfer', kind: 'action', text: warningHeadline(actions).replace(/^지금 /, ''),
+      why: lawEnf ? '수사기관은 전화로 이체나 인증정보를 요구하지 않아요.' : '공공기관·금융회사는 전화로 앱 설치·이체·인증정보를 요구하지 않아요.',
+    } : undefined;
+    let items = (kept.length ? kept : catalog.slice(0, 2)).filter((x) => x.id !== 'dont_transfer');
+    if (urgent) items = [urgent, ...items].slice(0, 2);
+    const key = (xs: Suggestion[]) => xs.map((x) => `${x.id}:${x.text}`).join();
+    if (key(items) !== key(this.state.suggestions)) this.emit({ op: 'suggestions.set', items });
   }
 
   /** 현재 상황 한 문장 — L2가 붙기 전까지 상태에서 결정론적으로 만든다 (§14.1-④) */
@@ -979,7 +1058,8 @@ export class CallSession {
       if (this.state.callId !== callId) return;
       const answer = r?.msg.content?.trim();
       // 확인되지 않은 전화번호는 지운다 (실측: 검색 결과의 업체 번호를 "지검 공식 대표번호"로 안내)
-      const safe = answer && !/사기입니다|사기다|제가 (대신|끊|신고)/.test(answer) ? scrubPhones(answer.slice(0, 400)).text : fallback;
+      const softened = answer && !/제가 (대신|끊|신고)/.test(answer) ? soften(scrubPhones(answer.slice(0, 400)).text) : null;
+      const safe = softened ?? fallback;
       this.emit({ op: 'chat.turn', turn: { id: aiId, role: 'ai', text: safe, atMs: this.now(), done: true } });
       // 물어본 답은 분석 로그에도 남긴다
       const b = this.canvas();

@@ -7,6 +7,9 @@ describe('검색 관련성·등급', () => {
     expect(relevant({ title: '문재인', snippet: '대한민국의 제19대 대통령', tier: 'reference' }, '국민건강보험공단 공식 대표전화')).toBe(false);
     expect(relevant({ title: '국민건강보험공단', snippet: '보건복지부 산하 준정부기관', tier: 'reference' }, '국민건강보험공단 공식 대표전화')).toBe(true);
     expect(relevant({ title: '온라인 뱅킹', snippet: '공무원 사칭 범죄가 늘고', tier: 'reference' }, '국민건강보험공단 사칭 전화 사기')).toBe(false);
+    // 공식 도메인이라도 검색어가 하나만 맞으면 제외 (실기 회귀)
+    expect(relevant({ title: '(석간) 서울브랜드굿즈 공모', snippet: '재단은 상품화 공모를', tier: 'official' }, '인터넷 휴대폰 결합 요금 위약금')).toBe(false);
+    expect(relevant({ title: '약정기간과 위약금 확인', snippet: '인터넷 결합 상품 해지 시 위약금', tier: 'official' }, '인터넷 휴대폰 결합 요금 위약금')).toBe(true);
   });
   test('공식 도메인 등급', () => {
     expect(tierOf('nhis.or.kr', 'naver')).toBe('official');

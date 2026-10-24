@@ -38,3 +38,12 @@ export async function enrollVoice(seconds: number, onTick: (left: number) => voi
   onTick(0);
   send({ t: 'voice.enroll', action: 'done' });
 }
+
+/** 처음 화면으로: 통화 중이면 정상 종료(리뷰·기록 저장) 후 대기 화면 */
+export function goHome() {
+  const { state, send } = useStore.getState();
+  if (state.phase === 'listening') stopCall();
+  else { stopScenarioAudio(); capture?.stop(); capture = null; }
+  if (state.phase !== 'idle') send({ t: 'call.new' });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}

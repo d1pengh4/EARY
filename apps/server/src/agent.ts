@@ -1,7 +1,7 @@
 // 보드 에이전트 (§8.11): 대화와 검색 결과를 계속 보면서 "무엇을 확인하고 어떻게 보여 줄지" 스스로 정해 분석 보드에 그린다.
 // - 좌표는 정하지 않는다. 구역·항목·연결의 "의도"만 내고 배치는 core/canvas.ts가 한다.
 // - 위험 단계는 바꿀 수 없다 (P2). 판정(verdict)은 근거 카드로만 남는다.
-import { link, scrubPhones, setSectionStatus, upsertChild, upsertSection } from '@eary/core';
+import { link, scrubPhones, setSectionStatus, soften, upsertChild, upsertSection } from '@eary/core';
 import type { Board, BoardPatch, ItemTone, SectionLayout, SourceRef } from '@eary/schema';
 import type { ChatMsg, GroqChat, ToolDef } from './groqChat';
 import { readPage, type MergedHit, type WebSearch } from './search';
@@ -35,7 +35,7 @@ const SYSTEM = `너는 통화를 함께 듣는 보조 "이어리"의 분석 보�
 3) 아직 확인 안 된 주장이 있으면 web_search 1~2번. 공식 자료(정부·공공기관) 우선, 뉴스·후기는 참고.
 4) 관계(graph)·순서(steps)·일정(timeline)이 이해에 도움이 될 때만 새 구역으로 그린다.
 이미 있는 구역·항목은 유지하고 새로 알게 된 것만 추가하거나 상태를 바꾼다. 같은 내용을 다시 만들지 않는다.
-규칙: 단정하지 않는다. "확인 못 함"은 "없음"이 아니다. 검색 결과는 통화 상대의 신원을 증명하지 않는다. 이어리는 대신 행동하지 않는다.
+규칙: 단정하지 않는다("보이스피싱입니다" 금지, "의심돼요"는 가능). "확인 못 함"은 "없음"이 아니다. 검색 결과는 통화 상대의 신원을 증명하지 않는다. 이어리는 대신 행동하지 않는다.
 글은 짧게: label 2~6자, value 25자 이내, note 40자 이내. 한 턴에 도구 호출은 꼭 필요한 만큼만. 더 할 게 없으면 done.
 id는 영문 소문자·숫자·밑줄로 짧게. 들은 정보 카드(heard:...)는 이미 보드에 있으니 link로 연결만 해도 된다.
 기본 구역은 이미 있다. 새로 만들지 말고 이 id를 그대로 쓴다: heard(들은 정보), search(찾은 자료), evidence(확인 결과), think(메모).
@@ -233,7 +233,12 @@ export class BoardAgent {
 
   private child(el: Parameters<typeof upsertChild>[1]) {
     // 에이전트가 쓴 글(검색 결과 카드 제외)에서 확인되지 않은 번호를 지운다
-    if (el.kind === 'item' && !el.url) el = { ...el, value: scrubPhones(el.value).text, sub: el.sub ? scrubPhones(el.sub).text : undefined };
+    if (el.kind === 'item' && !el.url) {
+      // 단정 표현은 누그러뜨리고, 안 되면 그 항목을 그리지 않는다
+      const v = soften(scrubPhones(el.value).text);
+      if (v === null) return;
+      el = { ...el, value: v, sub: el.sub ? (soften(scrubPhones(el.sub).text) ?? undefined) : undefined };
+    }
     if (el.kind === 'row') el = { ...el, cells: el.cells.map((c) => scrubPhones(c).text) };
     const b = this.port.board();
     if (b) this.port.apply(upsertChild(b, el, this.port.now()));
@@ -276,5 +281,6 @@ export function relevant(h: { title: string; snippet: string; tier: string }, qu
   // 첫 단어가 고유명(4자 이상, 예: 기관명)이면 그 이름은 반드시 들어 있어야 한다 (실측: "사칭"만 맞은 "온라인 뱅킹" 문서)
   const head = terms[0]!;
   if (head.length >= 4 && !text.includes(head)) return false;
-  return h.tier === 'official' ? hit >= 1 : hit / terms.length >= 0.5;
+  // 공식 도메인도 검색어 절반 이상이 맞아야 한다 (실기: 요금 상담에 "서울브랜드굿즈 공모"가 공식 자료로 올라옴)
+  return h.tier === 'official' ? hit / terms.length >= 0.5 || hit >= 2 : hit / terms.length >= 0.5;
 }

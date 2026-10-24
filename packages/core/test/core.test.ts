@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import type { Entity, RiskSignal } from '@eary/schema';
-import { scrubPhones, withParticle, warningHeadline, toIcs, createBoard, createL0, computeLevel, JsonArrayStreamer, nextRisk, EMPTY_RISK, syncEntity, applyBoardPatch, route } from '../src';
+import { soften, scrubPhones, withParticle, warningHeadline, toIcs, createBoard, createL0, computeLevel, JsonArrayStreamer, nextRisk, EMPTY_RISK, syncEntity, applyBoardPatch, route } from '../src';
 import { loadPacks } from '../src/load';
 
 const packs = loadPacks(join(import.meta.dir, '../../../data'));
@@ -223,4 +223,11 @@ describe('전화번호 안전장치 (실측 회귀)', () => {
     expect(scrubPhones('국민건강보험공단 1577-1000').text).toContain('1577-1000');
     expect(scrubPhones('사건번호 2026형제48271호, 23만 4천원').text).toBe('사건번호 2026형제48271호, 23만 4천원');
   });
+});
+
+test('단정 표현 누그러뜨리기 (실측: "보이스피싱입니다! 즉시 전화를 끊고…")', () => {
+  expect(soften('보이스피싱입니다! 즉시 전화를 끊고 112나 1332로 신고하세요!')).toBe('보이스피싱이 의심돼요. 즉시 전화를 끊고 112나 1332로 신고하세요.');
+  expect(soften('확실히 사기예요')).toBeNull();
+  expect(soften('이건 사기입니다.')).toBe('이건 사기가 의심돼요.');
+  expect(soften('공식 대표번호로 직접 확인하세요')).toBe('공식 대표번호로 직접 확인하세요');
 });

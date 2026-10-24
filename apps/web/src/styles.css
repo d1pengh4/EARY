@@ -236,3 +236,27 @@ a.it:hover { box-shadow: 0 0 0 3px var(--halo); }
 .live-opt { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--card-line); border-radius: 8px; background: #fff; text-align: left; }
 .enroll { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--ground); border-radius: 6px; }
 .enroll q { font-size: 15px; line-height: 1.5; }
+
+.brand-btn { position: relative; border: 0; background: transparent; padding: 4px 6px; margin: -4px -6px; border-radius: 6px; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.brand-btn:hover { background: var(--ground); }
+.brand-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.brand-tip { position: absolute; left: 0; top: calc(100% + 8px); z-index: 5; white-space: nowrap; padding: 6px 10px; border-radius: 6px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 600; }
+
+/* 사건 지도 고도화: 요구 카드·아이콘·연결선 그리기 */
+.c-demand { border: 2px solid var(--red); background: var(--red-box); color: var(--red-x); }
+.c-demand .lbl { color: var(--red-x); }
+.el[class*=" c-"].c-demand { padding: 8px 12px; }
+.el.c-demand .v { font-size: 16px; }
+.el.c-demand .sub { font-size: 12.5px; color: var(--red-x); opacity: .8; }
+.card-head { display: inline-flex; align-items: center; gap: 5px; }
+.card-ic { flex: none; opacity: .8; }
+.edges path.e-sequence, .edges path.e-pointer { stroke-dasharray: 600; stroke-dashoffset: 600; animation: draw .5s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.edges path.e-claim { animation: appear .35s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .edges path.e-sequence, .edges path.e-pointer { animation: none; stroke-dashoffset: 0; } }
+
+.demand-row { display: flex !important; align-items: center; gap: 8px; width: 100%; }
+.demand-row b { flex: 1; font-size: 16px; }
+.demand-at { font-size: 12.5px; opacity: .75; }
+/* 축소한 보드가 원래 크기만큼 자리를 차지해 생기던 스크롤바 제거 */
+.host-frame { overflow: hidden; }

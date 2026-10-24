@@ -66,6 +66,13 @@ describe('impersonation-01 (결정론)', () => {
     expect(board.els['callout:ev:case:case:2026형제48271']).toBeDefined();
     expect(board.els['callout:ev:official']).toBeDefined();
     expect(Object.keys(board.edges)).toEqual(expect.arrayContaining(['edge:org->person', 'edge:person->case', 'edge:case->me_account']));
+    // 고도화: 요구 카드(나오는 순서대로, 겹치지 않게) + "나에게 요구" + 범례
+    expect(board.els['demand:money_transfer']?.kind === 'card' && board.els['demand:money_transfer'].style).toBe('demand');
+    expect(board.els['demand:credential_request']).toBeDefined();
+    const d1 = board.placed['demand:money_transfer']!, d2 = board.placed['demand:credential_request']!;
+    expect(d2.y).toBeGreaterThanOrEqual(d1.y + d1.h);
+    expect(board.edges['edge:demands->me']?.label).toBe('나에게 요구');
+    expect(board.els['hand:legend']).toBeDefined();
     expect(s.risk.finalWarning?.reasons.length).toBeGreaterThanOrEqual(3);
     expect(s.situation.text).toBe('상대가 송금과 인증번호 전달을 직접 요구하고 있어요');
     expect(s.suggestions[0]?.id).toBe('dont_transfer');

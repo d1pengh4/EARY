@@ -3,7 +3,7 @@ import type { CallState, Mark, RiskSignal, Utterance } from '@eary/schema';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Board, useNow } from './Board';
 import { warningHeadline, withParticle } from '@eary/core';
-import { enrollVoice, startCall, stopCall } from './calls';
+import { enrollVoice, goHome, startCall, stopCall } from './calls';
 import { ReviewArea } from './Review';
 import { CanvasLog } from './CanvasLog';
 import { EvidenceView, evidenceCount } from './Evidence';
@@ -56,9 +56,17 @@ function Header() {
   const elapsed = s.startedAt && s.phase === 'listening' ? Math.max(0, now - Date.parse(s.startedAt)) : 0;
   const hh = (n: number) => String(Math.floor(n)).padStart(2, '0');
   const timer = `${hh(elapsed / 3_600_000)}:${hh((elapsed / 60_000) % 60)}:${hh((elapsed / 1000) % 60)}`;
+  // 로고 = 처음 화면. 통화 중에는 실수로 끊기지 않게 두 번 눌러야 한다
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 3000); return () => clearTimeout(t); }, [armed]);
+  const onLogo = () => {
+    if (s.phase === 'listening' && !armed) { setArmed(true); return; }
+    setArmed(false);
+    goHome();
+  };
   return (
     <header className="card header">
-      <div className="brand">
+      <button type="button" className="brand brand-btn" onClick={onLogo} aria-label={s.phase === 'listening' ? '통화를 끝내고 처음 화면으로' : '처음 화면으로'}>
         <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect x="3" y="10" width="4" height="8" rx="2" fill="#1B1B1B" /><rect x="9" y="5" width="4" height="18" rx="2" fill="#1B1B1B" /><rect x="15" y="8" width="4" height="12" rx="2" fill="#1B1B1B" /><rect x="21" y="11" width="4" height="6" rx="2" fill="#1B1B1B" /></svg>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
@@ -67,7 +75,8 @@ function Header() {
           </div>
           {s.callerNumber && <div className="mono" style={{ fontSize: 13, color: 'var(--muted)' }}>☎ {s.callerNumber}</div>}
         </div>
-      </div>
+        {armed && <span className="brand-tip" role="status">한 번 더 누르면 통화를 끝내고 처음으로 가요</span>}
+      </button>
       <div className="situation">
         <div className="lbl">{s.phase === 'ended' ? '통화 리뷰' : '현재 상황'}</div>
         <div className="situation-text" aria-live="polite">{s.phase === 'ended' && s.review ? s.review.title : s.situation.text}</div>
@@ -95,6 +104,8 @@ function MainArea() {
   const showWarning = s.risk.level === 'final' && s.risk.finalWarning && !s.risk.finalWarning.dismissed;
 
   const [view, setView] = useState<'board' | 'evidence'>('board');
+  // 새 통화·처음 화면이 되면 보던 탭(공식 근거 등)을 되돌린다 (실기: 로고로 홈에 가도 빈 근거 화면이 남았다)
+  useEffect(() => { setView('board'); }, [s.callId, s.phase]);
   useEffect(() => { const on = () => setView('evidence'); window.addEventListener('eary:evidence', on); return () => window.removeEventListener('eary:evidence', on); }, []);
   if (s.phase === 'ended') return <section className="card main"><ReviewArea /></section>;
   const evN = evidenceCount(s);
@@ -103,7 +114,7 @@ function MainArea() {
     <section className="card main">
       {s.boardOrder.length > 0 && (
         <div className="tabs" role="tablist">
-          {s.boardOrder.map((id) => {
+          {[...s.boardOrder].sort((a, b) => Number(s.boards[a]?.templateId === 'canvas') - Number(s.boards[b]?.templateId === 'canvas')).map((id) => {
             const b = s.boards[id]!;
             const on = id === s.activeBoardId;
             return (
@@ -162,7 +173,9 @@ function EmptyBoard() {
   );
 }
 
-const ENROLL_TEXT = '안녕하세요. 저는 지금 이어리에 제 목소리를 등록하고 있어요. 오늘 날씨가 맑고 바람이 시원하네요.';
+// 애국가 1절 (공공 영역). 누구나 외워서 편하게 읽고, 10초 분량이라 등록 시간도 10초
+const ENROLL_SECONDS = 10;
+const ENROLL_TEXT = '동해 물과 백두산이 마르고 닳도록 하느님이 보우하사 우리나라 만세. 무궁화 삼천리 화려 강산 대한 사람 대한으로 길이 보전하세.';
 
 /** 실제 통화 듣기: 스피커폰(마이크 하나, 목소리 등록) 또는 PC 통화(마이크 + 탭 오디오) */
 function LiveStart({ run }: { run: (f: () => Promise<void>) => void }) {
@@ -174,10 +187,10 @@ function LiveStart({ run }: { run: (f: () => Promise<void>) => void }) {
         <b>스피커폰 · 마이크 하나</b>
         <span className="sub">휴대폰 스피커폰을 노트북 마이크 가까이 두세요. 내 목소리와 전화 음질로 화자를 구분해요.</span>
         <div className="enroll">
-          <span className="lbl">1. 목소리 등록 (8초)</span>
-          {left > 0 ? <span className="pill p-teal">{left}초 · 아래 문장을 소리 내어 읽어 주세요</span> : voice?.enrolled ? <span className="pill p-teal">{voice.note ?? '등록됨'}</span> : voice?.note ? <span className="pill p-amber">{voice.note}</span> : null}
+          <span className="lbl">1. 목소리 등록 ({ENROLL_SECONDS}초)</span>
+          {left > 0 ? <span className="pill p-teal">{left}초 · 애국가 1절을 소리 내어 읽어 주세요</span> : voice?.enrolled ? <span className="pill p-teal">{voice.note ?? '등록됨'}</span> : voice?.note ? <span className="pill p-amber">{voice.note}</span> : null}
           <q>{ENROLL_TEXT}</q>
-          <button className="btn" type="button" disabled={left > 0} onClick={() => run(() => enrollVoice(8, setLeft))}>{voice?.enrolled ? '다시 등록' : '등록 시작'}</button>
+          <button className="btn" type="button" disabled={left > 0} onClick={() => run(() => enrollVoice(ENROLL_SECONDS, setLeft))}>{voice?.enrolled ? '다시 등록' : '등록 시작'}</button>
         </div>
         <button className="btn btn-primary" type="button" onClick={() => run(() => startCall({ kind: 'live', mono: true }))}>2. 스피커폰 통화 듣기</button>
         {!voice?.enrolled && <span className="sub" style={{ fontSize: 13 }}>등록 없이도 전화 음질로 구분하지만, 등록하면 더 정확해요.</span>}

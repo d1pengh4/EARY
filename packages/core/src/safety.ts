@@ -1,3 +1,4 @@
+import { withParticle } from './normalize';
 // 안전장치: LLM·검색이 만든 문장에서 확인되지 않은 전화번호를 지운다.
 // 실측 (2026-10-24): AI 답변이 검색 결과의 번호(010-…, 업체 블로그)를 "서울중앙지검 공식 대표번호"로 안내했다.
 // 사칭 피해를 막는 서비스가 엉뚱한 번호로 전화하게 만들면 안 되므로, 미리 검증한 공식 번호만 남긴다.
@@ -24,4 +25,13 @@ export function scrubPhones(text: string): { text: string; removed: string[] } {
   });
   // "(…)" 안에 지운 번호만 남은 괄호·이름 꾸밈 정리
   return { text: out.replace(/\(\s*\[번호는 기관 공식 홈페이지에서 직접 확인\]\s*\)/g, '(번호는 기관 공식 홈페이지에서 직접 확인)'), removed };
+}
+
+/** 단정 표현: 이어리는 "사기다"라고 단정하지 않는다 (실측: 에이전트 메모 "보이스피싱입니다! 즉시…") */
+export const ASSERTIVE = /(사기|보이스\s?피싱|스미싱|피싱)(입니다|이다|예요|이에요|네요|가 맞|임이 확실)|확실히 사기|틀림없이|100%/;
+
+/** 단정 문장을 "의심돼요"로 누그러뜨리고, 그래도 남으면 null */
+export function soften(text: string): string | null {
+  const t = text.replace(/(사기|보이스\s?피싱|스미싱|피싱)(입니다|이다|예요|이에요|네요)[!.]?/g, (_m, w: string) => `${withParticle(w, '이', '가')} 의심돼요.`).replace(/!+/g, '.');
+  return ASSERTIVE.test(t) ? null : t;
 }

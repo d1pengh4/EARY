@@ -117,7 +117,7 @@ export interface RiskState {
 
 // ── 보드 (§8) ─────────────────────────────────────────────
 export interface PillSpec { text: string; tone: 'amber' | 'red' | 'teal' | 'gray' }
-export type CardStyle = 'provisional' | 'claimed' | 'confirmed' | 'contradicted' | 'me';
+export type CardStyle = 'provisional' | 'claimed' | 'confirmed' | 'contradicted' | 'me' | 'demand';
 
 export type BoardEl =
   | { kind: 'card'; id: string; entityKey?: string; zone: string; slot?: string; label: string; value: string; pills: PillSpec[]; sub?: string; style: CardStyle; sources: SourceRef[] }

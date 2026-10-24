@@ -14,7 +14,7 @@ export interface MergedHit extends SearchHit { providers: string[]; score: numbe
 type Provider = { name: string; enabled: boolean; run: (q: string, signal: AbortSignal) => Promise<SearchHit[]> };
 
 const UA = 'EARY/0.1 (hackathon demo; contact: local)';
-const strip = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/\s+/g, ' ').trim();
+const strip = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&(amp|quot|lt|gt|nbsp)(?!;)/g, (_, e) => ({ amp: '&', quot: '"', lt: '<', gt: '>', nbsp: ' ' })[e as 'amp']).replace(/\s+/g, ' ').trim();
 
 const OFFICIAL_HOSTS = [
   'nhis.or.kr', 'fss.or.kr', 'kftc.or.kr', 'kisa.or.kr', 'spo.go.kr', 'police.go.kr', 'gov.kr', 'korea.kr', 'nts.go.kr', 'epeople.go.kr',

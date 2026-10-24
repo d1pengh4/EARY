@@ -29,6 +29,8 @@ describe('자유 실행 회귀 세트', () => {
       if (c.expect.maxRisk) expect(`${c.id}:${lv}`).toBe(`${c.id}:${ORDER[lv] <= ORDER[c.expect.maxRisk] ? lv : c.expect.maxRisk + '이하여야 함'}`);
       if (c.expect.minRisk) expect(`${c.id}:${ORDER[lv] >= ORDER[c.expect.minRisk] ? 'ok' : lv}`).toBe(`${c.id}:ok`);
       expect(s.state.review).toBeDefined();
+      // 위험 신호가 있으면 도메인과 상관없이 사건 지도가 열린다, 정상 통화는 안 열린다
+      expect(Boolean(s.state.boards['board:impersonation.entityMap'])).toBe(c.kind === 'scam');
       console.log(`  ${c.id.padEnd(16)} ${lv.padEnd(12)} ${s.state.risk.activeCategories.join(',')}`);
       s.dispose();
     });
