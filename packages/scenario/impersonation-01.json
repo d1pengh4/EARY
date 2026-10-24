@@ -1,0 +1,27 @@
+{
+  "id": "impersonation-01",
+  "title": "수사기관 사칭 의심 전화 (시연 대본)",
+  "callerNumber": "02-0000-0000",
+  "otherLabel": "상대",
+  "steps": [
+    { "step": 1, "label": "검사 자칭", "utterances": [
+      { "speaker": "other", "atMs": 1500, "text": "서울중앙지검 소속 홍길동 검사입니다. 본인 명의 계좌가 범죄에 연루되어 연락드렸습니다." },
+      { "speaker": "me", "atMs": 9500, "text": "제 계좌가요? 무슨 일인가요?" } ],
+      "expect": { "domain": "impersonation", "entities": ["org:서울중앙지검", "person:홍길동", "account:me"] } },
+    { "step": 2, "label": "비밀 유지·시간 압박", "utterances": [
+      { "speaker": "other", "atMs": 12500, "text": "수사 중인 사건이라 외부에 말씀하시면 안 됩니다. 지금 협조해 주셔야 합니다." },
+      { "speaker": "me", "atMs": 19500, "text": "잠깐만요, 제가 먼저 확인해 볼게요." },
+      { "speaker": "other", "atMs": 22500, "text": "오늘 안에 확인이 끝나야 합니다. 다른 곳에 전화하지 마세요." } ],
+      "expect": { "risk": "caution", "signals": ["secrecy", "time_pressure", "impersonation"] } },
+    { "step": 3, "label": "사건번호", "utterances": [
+      { "speaker": "me", "atMs": 28500, "text": "사건번호가 어떻게 되나요?" },
+      { "speaker": "other", "atMs": 31500, "text": "2026형제48271호입니다. 가족에게도 말씀하지 마세요." } ],
+      "expect": { "risk": "accumulating", "entities": ["case:2026형제48271"], "signals": ["unverifiable_case"] } },
+    { "step": 4, "label": "송금·인증번호 요구", "utterances": [
+      { "speaker": "other", "atMs": 38000, "text": "계좌가 동결되기 전에 안전계좌로 지금 바로 이체하셔야 합니다." },
+      { "speaker": "me", "atMs": 44500, "text": "그건 바로 못 하겠어요." },
+      { "speaker": "other", "atMs": 47500, "text": "문자로 가는 인증번호도 바로 불러주세요." },
+      { "speaker": "other", "atMs": 52500, "text": "시간이 없습니다. 지금 바로 하셔야 합니다." } ],
+      "expect": { "risk": "final", "signals": ["money_transfer", "credential_request"] } }
+  ]
+}

@@ -1,0 +1,26 @@
+id: impersonation
+label: 기관 사칭 의심
+jev: 수사기관·금융기관 등을 자칭하며 계좌·사건을 언급하는 통화
+gazetteer:
+  org:
+    - { canon: 서울중앙지검, aliases: [서울중앙지방검찰청, 중앙지검], kind: prosecution }
+    - { canon: 대검찰청, aliases: [대검], kind: prosecution }
+    - { canon: 서울남부지검, aliases: [서울남부지방검찰청, 남부지검], kind: prosecution }
+    - { canon: 금융감독원, aliases: [금감원], kind: regulator }
+    - { canon: 경찰청, aliases: [], kind: police }
+    - { canon: 서울경찰청, aliases: [서울지방경찰청], kind: police }
+  title: [검사, 수사관, 검찰수사관, 형사, 팀장, 조사관]
+patterns:
+  person: "([가-힣]{2,4})(검사|수사관|검찰수사관|형사|조사관)"
+  # STT 실측: "2026 현제 4만 8271호" (형제→현제, 숫자 정규화가 "4만 8271"을 만듦)
+  case: "(\\d{4})(형제|현제|형재|혁제|고합|고단|가합|가단|형)(?:(\\d{1,2})만)?(\\d{3,6})호?"
+  amount: "((?:\\d+(?:,\\d{3})*(?:만|천)?)+)원(정도|가량|쯤)?"
+  account_me: "(본인|제|내|고객님)명의(의)?계좌|제계좌|내계좌"
+suggestions:
+  - { id: ask_case_no, kind: ask, text: 사건번호를 물어보세요, why: 사건번호는 공개 조회로 바로 확인해 볼 수 있어요., unless: { entityType: case }, requires: { orgKind: [prosecution, police] } }
+  - { id: ask_official_site, kind: action, text: 기관 공식 홈페이지나 대표번호로 직접 확인하겠다고 말해 보세요, why: 문자·전화로 받은 링크나 번호는 진짜인지 알 수 없어요., requires: { signal: [remote_app] } }
+  - { id: ask_callback, kind: action, text: 공식 대표번호로 다시 걸겠다고 말해 보세요, why: 직접 찾은 번호로 걸면 상대가 진짜인지 확인할 수 있어요. }
+  - { id: ask_name_dept, kind: ask, text: 소속 부서와 이름을 다시 물어보세요, why: 공개 검사 목록과 대조할 수 있어요., unless: { entityType: person }, requires: { orgKind: [prosecution, police, regulator] } }
+  - { id: dont_transfer, kind: action, text: 송금하거나 인증번호를 알려주지 마세요, why: 수사기관은 전화로 이체나 인증정보를 요구하지 않아요., requires: { signal: [money_transfer, credential_request] } }
+board: impersonation.entityMap
+verify: [prosecutorList, caseLookup, officialCorpus]

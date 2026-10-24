@@ -1,0 +1,9 @@
+# 자유 실행 기본 템플릿 (§8.4 general). 엔티티 카드를 3열 격자에 타입 순서로 채운다.
+id: general.facts
+title: 핵심 정보
+size: { w: 880, h: 560 }
+slots: {}
+zones:
+  facts:    { x: 32, y: 32,  w: 816, h: 360, cell: { w: 256, h: 104 }, gap: 24, cols: 3 }
+  checks:   { x: 32, y: 408, w: 816, h: 120 }
+relations: []

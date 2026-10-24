@@ -1,0 +1,20 @@
+id: billing
+label: 요금·가입 상담
+jev: 인터넷·휴대폰 등 요금, 약정, 가입, 설치를 상담하는 통화
+gate: [time_pressure, secrecy]   # 이 도메인에서는 행동 신호와 함께일 때만 단계 계산에 넣는다 (§9 도메인 게이트)
+gazetteer:
+  org:
+    - { canon: SK텔레콤, aliases: [SKT, 에스케이텔레콤], kind: telecom }
+    - { canon: KT, aliases: [케이티], kind: telecom }
+    - { canon: LG유플러스, aliases: [유플러스, LGU+], kind: telecom }
+  product: [인터넷, 휴대폰, 결합, IPTV, 요금제]
+patterns:
+  amount: "((?:\\d+(?:,\\d{3})*(?:만|천)?)+)원(정도|가량|쯤)?"   # "23만 4천원", "118,000원", "12만 원 정도"
+  duration: "(\\d+)개월(약정)?"
+suggestions:
+  - { id: ask_penalty, kind: ask, text: 위약금이 얼마인지 물어보세요, why: 약정 중 해지하면 내는 비용이라 미리 알아 두면 좋아요. }
+  - { id: ask_install_fee, kind: ask, text: 설치비가 있는지 물어보세요, why: 월 요금과 따로 한 번 내는 비용이에요. }
+  - { id: ask_included, kind: ask, text: 요금에 포함된 항목을 물어보세요, why: 할인·부가서비스 포함 여부에 따라 실제 금액이 달라져요. }
+  - { id: ask_final_price, kind: ask, text: 최종 월 요금을 정확히 물어보세요, why: "'정도'라고 하면 예상 비용이라 확정이 아니에요." }
+board: billing.compare
+verify: []

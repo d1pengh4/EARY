@@ -1,0 +1,13 @@
+{
+  "id": "billing-01",
+  "title": "인터넷·휴대폰 결합 요금 상담 (대조군)",
+  "callerNumber": "1588-0000",
+  "otherLabel": "상담원",
+  "steps": [
+    { "step": 1, "label": "결합 요금 안내", "utterances": [
+      { "speaker": "other", "atMs": 1500, "text": "두 상품을 결합하시면 월 12만 원 정도 나옵니다." },
+      { "speaker": "me", "atMs": 6500, "text": "약정이 있나요? 설치는 언제쯤 되나요?" },
+      { "speaker": "other", "atMs": 11000, "text": "36개월 약정이고, 설치는 다음 주 중에 가능합니다. 오늘 가입하시면 할인 혜택이 있어요." } ],
+      "expect": { "risk": "none", "domain": "billing", "entities": ["amount:120000", "duration:36개월"] } }
+  ]
+}

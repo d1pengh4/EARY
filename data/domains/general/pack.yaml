@@ -1,0 +1,14 @@
+id: general
+label: 일반 상담
+jev: 그 외 일반 상담 (예약, 배송, 문의 등)
+gate: [time_pressure, secrecy]
+gazetteer: { org: [] }
+patterns:
+  amount: "((?:\\d+(?:,\\d{3})*(?:만|천)?)+)원(정도|가량|쯤)?"   # "23만 4천원", "118,000원", "12만 원 정도"
+  date: "(\\d{1,2})월(\\d{1,2})일|(다음|이번)주(중)?|(내일|모레)"   # "오늘"은 "오늘 안에"(시간 압박)와 겹쳐 잡음이 돼서 뺐다
+suggestions:
+  - { id: ask_next_step, kind: ask, text: 다음에 무엇을 해야 하는지 물어보세요, why: 통화 후 할 일을 놓치지 않게요. }
+  - { id: ask_contact, kind: ask, text: 다시 연락할 공식 번호를 물어보세요, why: 나중에 확인할 때 필요해요. }
+  - { id: ask_cost, kind: ask, text: 비용이 드는지 물어보세요, why: 금액이 나오지 않았어요. }
+board: general.facts
+verify: []
