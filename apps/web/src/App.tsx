@@ -163,7 +163,7 @@ function EmptyBoard() {
       {s.phase !== 'listening' && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button className="btn btn-primary" type="button" style={{ minHeight: 56, padding: '0 28px', fontSize: 17 }} onClick={() => run(() => startCall({ kind: 'scenario', id: 'impersonation-01' }))}>시연 시작 · 사칭 의심 전화</button>
+            <button className="btn btn-primary" type="button" style={{ minHeight: 56, padding: '0 28px', fontSize: 17 }} onClick={() => run(() => startCall({ kind: 'scenario', id: 'prosecutor-02' }))}>시연 시작 · 검찰 사칭 전화</button>
             <button className="btn" type="button" style={{ minHeight: 56 }} onClick={() => run(() => startCall({ kind: 'scenario', id: 'billing-01' }))}>대조군 · 요금 상담</button>
           </div>
           <div className="sub">{stt ? '시연은 실제 음성인식(RTZR)을 거쳐요.' : '음성인식 키가 없어 대본 텍스트로 재생해요.'}</div>

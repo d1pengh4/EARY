@@ -3,6 +3,8 @@ import { playScenarioAudio, startCapture, stopScenarioAudio, type Capture } from
 import { useStore } from './store';
 
 let capture: Capture | null = null;
+/** 시작 요청 번호: 탭 공유 창을 기다리는 사이 다시 시작하면 앞 캡처를 버린다 (실기: 마이크가 두 번 연결돼 내 말이 "리리리"처럼 반복) */
+let startSeq = 0;
 
 export async function startCall(c: { kind: 'scenario'; id: string; speed?: number; text?: boolean } | { kind: 'live'; mono?: boolean } | { kind: 'type' }) {
   const { send, providers } = useStore.getState();
@@ -14,7 +16,11 @@ export async function startCall(c: { kind: 'scenario'; id: string; speed?: numbe
     if (audio) playScenarioAudio(c.id);
   } else if (c.kind === 'live') {
     // 스피커폰(마이크 하나): 화자는 서버가 음질·목소리로 추정 / PC 통화: 마이크=나, 탭 오디오=상대
-    capture = await startCapture({ mic: true, tab: !c.mono, raw: c.mono });
+    const seq = ++startSeq;
+    const cap = await startCapture({ mic: true, tab: !c.mono, raw: c.mono });
+    if (seq !== startSeq) { cap.stop(); return; }
+    capture?.stop();
+    capture = cap;
     send({ t: 'call.start', mode: 'live', consentNotified: true, audio: c.mono ? 'mono' : 'dual' });
   } else {
     send({ t: 'call.start', mode: 'type', consentNotified: true });
@@ -22,6 +28,7 @@ export async function startCall(c: { kind: 'scenario'; id: string; speed?: numbe
 }
 
 export function stopCall(notify = true) {
+  startSeq++;
   stopScenarioAudio();
   capture?.stop();
   capture = null;

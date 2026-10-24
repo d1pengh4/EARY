@@ -41,3 +41,15 @@ export function soften(text: string): string | null {
   const t = text.replace(/(사기|보이스\s?피싱|스미싱|피싱)(입니다|이다|예요|이에요|네요)[!.]?/g, (_m, w: string) => `${withParticle(w, '이', '가')} 의심돼요.`).replace(/!+/g, '.');
   return ASSERTIVE.test(t) ? null : t;
 }
+
+/**
+ * 확인되지 않은 신고처·센터 이름이 있으면 true. 그런 문장은 화면에 올리지 않는다.
+ * 실기 (2026-10-25): 에이전트가 사건 지도 메모에 "112나 찐센터로 신고하세요"라고 없는 신고처를 지어냈다.
+ */
+const KNOWN_CHANNELS = /(경찰|112|금융감독원|금감원|1332|검찰|1301|118|한국인터넷진흥원|불법스팸|보이스피싱|통합신고|사이버수사|국민건강보험공단|고객)/;
+export function unknownChannel(text: string): boolean {
+  for (const m of text.matchAll(/([가-힣A-Za-z0-9]{1,12})\s?(신고센터|센터)/g)) {
+    if (!KNOWN_CHANNELS.test(m[1]!)) return true;
+  }
+  return false;
+}

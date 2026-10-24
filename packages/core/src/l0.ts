@@ -105,6 +105,9 @@ export function createL0(lexicon: Lexicon, packs: DomainPack[]): L0Engine {
           const fixed = Boolean(m[3]) || kind !== m[2];
           push({ key: entityKey('case', `${m[1]}${kind}${serial}`), type: 'case', value: `${m[1]}${kind}${serial}호`, attrs: fixed ? { stt_fixed: 'true' } : {}, confidence: fixed ? 0.9 : 0.95, span, hint });
         });
+        eachMatch(cp.re.account_safe, c, (_m, span) => {
+          push({ key: 'account:안전계좌', type: 'account', value: '안전계좌', attrs: { owner: 'other' }, confidence: 0.9, span, hint });
+        });
         eachMatch(cp.re.account_me, c, (_m, span) => {
           push({ key: 'account:me', type: 'account', value: '내 명의 계좌', attrs: { owner: 'me' }, confidence: 0.9, span, hint });
         });
@@ -162,7 +165,8 @@ function fuzzyIndex(hay: string, needle: string): number {
   return -1;
 }
 
-const CASE_KIND_FIX: Record<string, string> = { 현제: '형제', 형재: '형제', 혁제: '형제' };
+// 실기 STT: "2026 현재 4만 8271호" (연도·숫자 사이에서만 보므로 일반 단어 "현재"와 헷갈리지 않는다)
+const CASE_KIND_FIX: Record<string, string> = { 현제: '형제', 현재: '형제', 형재: '형제', 혁제: '형제' };
 
 const NOT_NAMES = new Set(['부장', '담당', '지검', '소속', '수사', '검찰', '본부', '저는', '제가']);
 

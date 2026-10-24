@@ -82,6 +82,8 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .el > span { display: block; min-width: 0; width: 100%; }
 .el .v { display: block; font-weight: 700; font-size: 17px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .el .pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+/* 오른쪽 열의 작은 카드: 표시(pill)를 제목 줄 오른쪽에 올려 잘리지 않게 (실기: "신원 미확인"이 카드 밖으로 잘림) */
+.el.compact .pills { position: absolute; top: 8px; right: 10px; margin: 0; }
 .el .sub { font-size: 14px; }
 .c-provisional { border: 2px dashed var(--edge-soft); opacity: .62; }
 .c-claimed { border: 2px dashed var(--edge); }

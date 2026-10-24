@@ -9,7 +9,7 @@ export interface DomainPack {
   jev: string;
   gate?: SignalCategory[];
   gazetteer: { org: GazetteerOrg[]; title?: string[]; product?: string[] };
-  patterns: Partial<Record<'person' | 'case' | 'account_me' | 'amount' | 'duration' | 'date', string>>;
+  patterns: Partial<Record<'person' | 'case' | 'account_me' | 'account_safe' | 'amount' | 'duration' | 'date', string>>;
   suggestions: (Suggestion & {
     unless?: { entityType?: EntityType };
     requires?: { signal?: SignalCategory[]; orgKind?: string[] };

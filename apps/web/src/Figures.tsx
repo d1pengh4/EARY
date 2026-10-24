@@ -23,7 +23,9 @@ export function CanvasFigures() {
   if (!figs.length) return <div className="host board-empty"><div className="hand">대화가 쌓이면 여기에 여러 그림이 그려져요</div></div>;
   // 중요한 도식이 먼저: 경고·흐름 → 비교 → 나머지
   const rank: Record<string, number> = { quote: 0, money: 1, stages: 2, tree: 3, meter: 4, compare: 5, graph: 6, balance: 7, radar: 8, heat: 9, timeline: 10, flow: 11, bars: 12, bubbles: 13, matrix: 14, checklist: 15, note: 16 };
-  const sorted = [...figs].sort((a, b) => (rank[a.kind] ?? 20) - (rank[b.kind] ?? 20));
+  // 같은 종류는 규칙 도식이 앞, 에이전트 도식은 뒤. 인용은 규칙의 "결정적인 한마디"가 생기면 에이전트 인용을 숨긴다 (실기: 인용 두 장이 맨 위에)
+  const hasRuleQuote = figs.some((f) => f.kind === 'quote' && f.meta.by === 'rule');
+  const sorted = figs.filter((f) => !(hasRuleQuote && f.kind === 'quote' && f.meta.by === 'agent')).sort((a, b) => (rank[a.kind] ?? 20) - (rank[b.kind] ?? 20) || Number(a.meta.by === 'agent') - Number(b.meta.by === 'agent'));
   return (
     <div className="figs">
       {sorted.map((f) => (

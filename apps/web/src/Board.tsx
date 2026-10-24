@@ -82,7 +82,7 @@ const El = memo(function El({ el, p, badge }: { el: BoardEl; p: Placed; badge?: 
   }
   if (el.kind === 'card') {
     return (
-      <button type="button" className={`el c-${el.style}${badge === '방금 추가' ? ' halo' : ''}`} style={{ ...style, height: p.h }} onClick={jump} aria-label={`${el.label} ${el.value}`} title={el.value}>
+      <button type="button" className={`el c-${el.style}${el.zone === 'overflow' ? ' compact' : ''}${badge === '방금 추가' ? ' halo' : ''}`} style={{ ...style, height: p.h }} onClick={jump} aria-label={`${el.label} ${el.value}`} title={el.value}>
         <span>
           <span className="lbl card-head"><CardIcon kind={el.id.startsWith('demand:') ? 'demand' : (el.entityKey?.split(':')[0] ?? '')} />{el.label}</span>{' '}
           {badge && <span className="pill p-teal">{badge}</span>}

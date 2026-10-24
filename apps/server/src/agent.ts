@@ -1,7 +1,7 @@
 // 보드 에이전트 (§8.11): 대화와 검색 결과를 계속 보면서 "무엇을 확인하고 어떻게 보여 줄지" 스스로 정해 분석 보드에 그린다.
 // - 좌표는 정하지 않는다. 구역·항목·연결의 "의도"만 내고 배치는 core/canvas.ts가 한다.
 // - 위험 단계는 바꿀 수 없다 (P2). 판정(verdict)은 근거 카드로만 남는다.
-import { link, scrubPhones, setSectionStatus, soften, upsertChild, upsertSection } from '@eary/core';
+import { link, scrubPhones, setSectionStatus, soften, unknownChannel, upsertChild, upsertSection } from '@eary/core';
 import type { Board, BoardPatch, Figure, FigTone, ItemTone, SectionLayout, SourceRef } from '@eary/schema';
 import type { ChatMsg, GroqChat, ToolDef } from './groqChat';
 import { readPage, type MergedHit, type WebSearch } from './search';
@@ -245,9 +245,12 @@ export class BoardAgent {
         return { ok: true };
       }
       case 'note': {
+        // 메모도 화면에 나가는 글이다: 단정 표현·확인 안 된 번호·없는 신고처를 거른다
+        const v = tx(a.text, 60);
+        if (!v || unknownChannel(v)) { this.port.log(`note 거절 ${String(a.text).slice(0, 60)}`); return { error: '확인되지 않은 표현·신고처가 있어 메모를 쓰지 않았다' }; }
         this.ensureSection('think', '이어리가 정리 중', 'notes');
         const n = Object.values(this.port.board()!.els).filter((e) => e.kind === 'item' && e.section === 'sec:think').length;
-        this.child({ kind: 'item', id: `note:${n + 1}`, zone: 'canvas', section: 'sec:think', label: a.tone === 'warning' ? '주의' : '메모', value: String(a.text).slice(0, 60), tone: a.tone === 'warning' ? 'warning' : 'info', pills: [], sources: [] });
+        this.child({ kind: 'item', id: `note:${n + 1}`, zone: 'canvas', section: 'sec:think', label: a.tone === 'warning' ? '주의' : '메모', value: v, tone: a.tone === 'warning' ? 'warning' : 'info', pills: [], sources: [] });
         return { ok: true };
       }
       default:
@@ -365,8 +368,9 @@ export function sanitizeFigure(kind: string, id: string, title: string, d: any):
       return { kind: 'balance', id, title: t, left: side(d.left), right: side(d.right) };
     }
     case 'quote': {
+      // 화자는 괄호 앞까지만 (자르다 괄호만 남는 일 방지, 실기: "상대 (김민수")
       const q = tx(d.quote, 80);
-      return q ? { kind: 'quote', id, title: t, quote: q, speaker: tx(d.speaker, 8) || '상대', note: d.note ? tx(d.note, 30) : undefined, tone: ft(d.tone) } : null;
+      return q ? { kind: 'quote', id, title: t, quote: q, speaker: tx(String(d.speaker ?? '').replace(/\s*[(（].*$/, ''), 8) || '상대', note: d.note ? tx(d.note, 30) : undefined, tone: ft(d.tone) } : null;
     }
     case 'checklist': {
       const items = arr(d.items, 6).map((i) => ({ text: tx(i.text, 24), done: Boolean(i.done) })).filter((i) => i.text);
@@ -378,7 +382,7 @@ export function sanitizeFigure(kind: string, id: string, title: string, d: any):
     }
     case 'note': {
       const text = tx(d.text, 80);
-      return text ? { kind: 'note', id, title: t || undefined, text, tone: ft(d.tone) } : null;
+      return text && !unknownChannel(text) ? { kind: 'note', id, title: t || undefined, text, tone: ft(d.tone) } : null;
     }
   }
   return null;

@@ -2,10 +2,13 @@
 // 사용: bun scripts/make-test-call.ts → 웹 빌드 → http://localhost:8787/test-call/ 을 다른 탭에서 열고 PC 통화 모드로 그 탭 소리를 공유
 import { $ } from 'bun';
 import { join } from 'node:path';
+import demo from '../packages/scenario/prosecutor-02.json';
 
 type Line = ['상대' | '나', string];
 const SCRIPTS: { id: string; title: string; expect: string; voice: string; lines: Line[] }[] = [
-  { id: 'prosecutor', title: '검찰 사칭', expect: '주의 → 누적 → 최종 경고, 사건 지도, 사기 단계 5개, 돈 흐름, 레이더', voice: 'Reed', lines: [
+  // 발표 시연 대본과 같은 문장 (packages/scenario/prosecutor-02.json)
+  { id: 'prosecutor-full', title: '검찰 사칭 (발표 대본)', expect: '1줄 주의 → 5줄(사건번호) 누적 → 13줄(송금) 최종, 사건 지도 완성', voice: 'Yuna', lines: demo.steps.flatMap((st) => st.utterances.map((u) => [u.speaker === 'me' ? '나' : '상대', u.text] as Line)) },
+  { id: 'prosecutor', title: '검찰 사칭', expect: '주의 → 누적 → 최종 경고, 사건 지도, 사기 단계 5개, 돈 흐름, 레이더', voice: 'Yuna', lines: [
     ['상대', '여보세요, 서울중앙지검 김민수 수사관입니다. 본인 맞으시죠?'],
     ['나', '네, 맞는데요. 무슨 일이세요?'],
     ['상대', '본인 명의 계좌가 금융범죄 사건에 연루돼서 연락드렸습니다. 사건번호는 2026형제48271호입니다.'],
@@ -24,7 +27,7 @@ const SCRIPTS: { id: string; title: string; expect: string; voice: string; lines
     ['나', '네 계좌로 보내면 안 돼?'],
     ['상대', '내 계좌는 정지돼서 친구 계좌로 보내줘야 해. 그리고 엄마 신분증 사진도 좀 찍어서 보내줘.'],
   ] },
-  { id: 'parcel', title: '택배 사기', expect: '"회사 자칭" 단계, 인증정보 요구 경고', voice: 'Eddy', lines: [
+  { id: 'parcel', title: '택배 사기', expect: '"회사 자칭" 단계, 인증정보 요구 경고', voice: 'Yuna', lines: [
     ['상대', '여기 CJ대한통운인데요, 고객님 택배가 주소 불명으로 반송 대기 중입니다.'],
     ['나', '네? 주문한 게 없는데요.'],
     ['상대', '문자로 보내드린 링크를 눌러서 주소 다시 입력하시고 재배송비 3천 원 결제해 주세요.'],
@@ -39,7 +42,7 @@ const SCRIPTS: { id: string; title: string; expect: string; voice: string; lines
     ['나', '그럼 1년 쓰면 얼마나 아끼는 거예요?'],
     ['상대', '월 2만 원씩 절약되니까 위약금 빼도 1년에 20만 원 넘게 아끼십니다.'],
   ] },
-  { id: 'real-prosecutor', title: '진짜 검사 연락', expect: '위험 없음 또는 주의, 본인 확인 안 됨, 확인 방법 카드, 최종 경고 없음', voice: 'Reed', lines: [
+  { id: 'real-prosecutor', title: '진짜 검사 연락', expect: '위험 없음 또는 주의, 본인 확인 안 됨, 확인 방법 카드, 최종 경고 없음', voice: 'Yuna', lines: [
     ['상대', '안녕하세요, 서울중앙지검 형사부 박지훈 검사실 수사관입니다.'],
     ['나', '네, 무슨 일이시죠?'],
     ['상대', '지난달 접수하신 고소 사건 관련해서 진술 일정 잡으려고 연락드렸습니다.'],

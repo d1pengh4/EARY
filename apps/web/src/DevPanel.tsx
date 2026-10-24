@@ -26,7 +26,8 @@ export function DevPanel({ onClose }: { onClose: () => void }) {
         <span className="off">L2 미연결</span>
       </div>
       <div className="row">
-        <button className="btn" type="button" onClick={() => start('impersonation-01')}>사칭 대본</button>
+        <button className="btn" type="button" onClick={() => start('prosecutor-02')}>검찰 사칭(발표)</button>
+        <button className="btn" type="button" onClick={() => start('impersonation-01')}>사칭 대본(짧은)</button>
         <button className="btn" type="button" onClick={() => start('billing-01')}>요금 대본</button>
         <label>속도 <select className="field" style={{ minHeight: 36 }} value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>{[0.5, 1, 2, 4].map((v) => <option key={v} value={v}>×{v}</option>)}</select></label>
         <label><input type="checkbox" checked={textOnly} onChange={(e) => setTextOnly(e.target.checked)} /> 텍스트 재생(STT 생략)</label>

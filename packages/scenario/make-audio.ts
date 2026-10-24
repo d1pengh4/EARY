@@ -9,7 +9,7 @@ import { SCENARIOS } from './index';
 
 const RATE = 16000;
 // 이 기기에서 실제로 소리가 나는 한국어 음성은 Yuna뿐 (다른 음성은 다운로드 필요) → 말 속도로 구분
-const VOICE = { other: 'Yuna', me: 'Yuna' } as const;
+const VOICE = { other: process.env.VOICE_OTHER ?? 'Yuna', me: process.env.VOICE_ME ?? 'Yuna' } as const;
 const RATE_WPM = { other: 190, me: 165 } as const;
 const GAP_MS = 450; // 앞 발화가 끝난 뒤 최소 쉬는 시간
 

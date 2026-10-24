@@ -50,6 +50,8 @@ export async function startCapture(opts: { mic: boolean; tab: boolean; micChanne
     // 스피커폰(raw): 잡음 제거·자동 음량을 끈다. 화자 구분 단서(고음·저음 비율)를 바꾸고, 스피커 소리를 잡음으로 깎을 수 있다
     const mic = await navigator.mediaDevices.getUserMedia({ audio: opts.raw ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } : { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
     streams.push(mic);
+    // 진단: 어떤 마이크로 몇 Hz인지 (블루투스 이어폰은 통화 중 음질이 크게 떨어진다)
+    console.info('[eary] mic', mic.getAudioTracks()[0]?.label, mic.getAudioTracks()[0]?.getSettings());
     wire(mic, opts.micChannel ?? 0);
     channels.push('me');
   }

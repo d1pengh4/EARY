@@ -1,7 +1,7 @@
 // 통화 세션 = 서버가 원본 상태를 갖는 이벤트 로그 + 파이프라인 오케스트레이터. (§6, §7, §8.10, §9)
 // 규칙: 시나리오 이름으로 분기하지 않는다. 모든 판단은 상태와 도메인 팩으로만 한다. (§14)
 import {
-  applyOp, buildRuleFigures, familyClaim, gridCell, route, soften, warningHeadline, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
+  applyOp, buildRuleFigures, familyClaim, unknownChannel, gridCell, route, soften, warningHeadline, guessSpeaker, learn, scrubPhones, voiceFeatures, type SpeakerModel, type VoiceFeat, buildBillingBoard, buildReview, withParticle, createBoard, createCanvas, link, upsertChild, upsertSection, entityKey, initialState, nextRisk, sameRisk, syncCallout, syncEntity,
   type BoardTemplate, type DomainPack, type L0Engine, type Packs,
 } from '@eary/core';
 import {
@@ -68,6 +68,8 @@ export class CallSession {
   private expiry = new Map<string, ReturnType<typeof setTimeout>>();
   private verified = new Set<string>();
   private otherLabel = '상대';
+  /** 상대가 "○○ 씨"로 부른 사람 = 전화를 받은 나 */
+  private addressee = '';
   private typeCount = 0;
   private l1Abort: AbortController | null = null;
   /** D1이 "공공기관 자칭"으로 본 발화. L1이 나중에 만든 기관에도 표시를 붙인다 */
@@ -167,7 +169,7 @@ export class CallSession {
       ...(e.attrs.estimate === 'true' ? [{ text: '예상 비용', tone: 'amber' as const }] : []),
     ];
     const tone = e.certainty === 'provisional' ? 'heard' : e.attrs.owner === 'me' ? 'confirmed' : e.certainty === 'contradicted' ? 'contradicted' : 'claimed';
-    this.canvasApply(upsertChild(b, { kind: 'item', id, zone: 'canvas', section: 'sec:heard', label: KIND_KO[e.type] ?? e.type, value: e.type === 'person' && e.certainty !== 'confirmed' ? `${e.value} (자칭)` : e.value, tone, pills, entityKey: e.key, sources: e.sources }, this.now()));
+    this.canvasApply(upsertChild(b, { kind: 'item', id, zone: 'canvas', section: 'sec:heard', label: e.type === 'account' && e.attrs.owner !== 'me' ? '계좌' : KIND_KO[e.type] ?? e.type, value: e.type === 'person' && e.certainty !== 'confirmed' ? `${e.value} (자칭)` : e.value, tone, pills, entityKey: e.key, sources: e.sources }, this.now()));
   }
 
   /** 서버가 스스로 하는 검색: 새 기관·행동 요구가 나오면 바로 (에이전트를 기다리지 않음) */
@@ -247,6 +249,7 @@ export class CallSession {
       case 'call.start':
         this.mono = msg.mode === 'live' && msg.audio === 'mono';
         this.monoChunks = []; this.monoBytes = 0; this.monoDropped = 0; this.monoStreamBase = 0; this.uttFeat.clear();
+        this.audioMeter = {};
         this.start(msg.mode, msg.scenarioId, msg.consentNotified, msg.callerNumber, msg.speed);
         break;
       case 'voice.enroll':
@@ -380,7 +383,26 @@ export class CallSession {
     }
     const speaker = CHANNELS[frame[0]!];
     if (!speaker) return;
+    this.meterAudio(speaker, frame.length - 1);
     this.stream(speaker).push(frame.subarray(1));
+  }
+
+  /** 채널별 수신량 점검: 16kHz PCM16 = 초당 32,000바이트. 크게 넘으면 같은 마이크가 두 번 연결된 것 (실기: 내 말이 반복돼 인식) */
+  private audioMeter: Partial<Record<Speaker, { t0: number; bytes: number; warned?: boolean }>> = {};
+  private meterAudio(sp: Speaker, n: number) {
+    const now = performance.now();
+    const m = (this.audioMeter[sp] ??= { t0: now, bytes: 0 });
+    m.bytes += n;
+    const sec = (now - m.t0) / 1000;
+    if (sec < 5) return;
+    const rate = m.bytes / sec;
+    this.d.log?.(`audio ${sp} ${(rate / 1000).toFixed(1)}KB/s (정상 32.0)`);
+    if (rate > 44_000 && !m.warned) {
+      m.warned = true;
+      console.warn('[audio]', sp, '수신량이 정상의', (rate / 32_000).toFixed(1), '배 — 마이크·탭이 두 번 연결됐을 수 있음');
+      this.d.send({ t: 'error', code: 'audio_duplicate', message: `${sp === 'me' ? '마이크' : '탭'} 소리가 두 번 들어오고 있어요. 통화를 끝내고 새로고침한 뒤 다시 시작해 주세요.`, recoverable: true });
+    }
+    this.audioMeter[sp] = { t0: now, bytes: 0, warned: m.warned };
   }
 
   private finishEnroll() {
@@ -524,7 +546,10 @@ export class CallSession {
     for (const e of r.entities) {
       const cur = this.state.entities[e.key];
       const sources = cur ? dedupeSources([...cur.sources, src]) : [src];
-      const certainty = cur && cur.certainty !== 'provisional' ? cur.certainty : e.confidence >= 0.9 ? 'claimed' : 'provisional';
+      // 이미 기관을 자칭한 통화에서 "○○○ 검사"처럼 수사 직함이 붙은 이름은 바로 자칭 정보로 (실기: Groq 한도 초과 때 "박정훈 검사"가 잠정으로 사라짐)
+      const authorityCall = Object.values(this.state.entities).some((x) => x.type === 'org' && x.certainty !== 'provisional' && ['prosecution', 'police', 'regulator'].includes(x.attrs.kind ?? ''));
+      const titled = e.type === 'person' && PROSECUTION_TITLES.has(e.attrs.title ?? '') && authorityCall && speaker === 'other';
+      const certainty = cur && cur.certainty !== 'provisional' ? cur.certainty : e.confidence >= 0.9 || titled ? 'claimed' : 'provisional';
       this.upsertEntity({ key: e.key, type: e.type, value: e.value, attrs: { ...cur?.attrs, ...e.attrs }, certainty, confidence: Math.max(e.confidence, cur?.confidence ?? 0), origin: [...new Set([...(cur?.origin ?? []), 'L0' as const])], sources });
       if (certainty === 'provisional') this.scheduleExpiry(e.key);
     }
@@ -661,15 +686,23 @@ export class CallSession {
           }
           if (existing && GENERIC_ORGS.has(e.value.replace(/\s+/g, '')) && existing.value !== e.value) return;
         }
+        // 상대가 부른 사람(전화를 받은 나)은 상대 쪽 인물이 아니다 (실기: "최지은 씨 본인 되십니까?" → 인물 카드 "최지은")
+        if (e.type === 'person' && u.speaker === 'other') {
+          const nm = (e.name ?? e.value).replace(/\s+/g, '');
+          if (nm && new RegExp(`${nm}(씨|님|고객님)|${nm}(본인|맞으|되십|이시)`).test(text.replace(/\s+/g, ''))) { this.addressee = nm; return; } // 상대는 자기를 직함으로 부르고, 나를 "○○ 씨"로 부른다
+        }
         const viaL0 = this.d.l0.scan(e.quote).entities.find((x) => x.type === e.type);
-        const key = viaL0?.key ?? (e.type === 'person' ? entityKey('person', e.name ?? e.value.split(/\s/)[0] ?? e.value) : entityKey(e.type, e.value));
+        // 상대가 "○○ 씨 명의 통장", "본인 명의 계좌"라고 하면 그 계좌는 내 계좌다 (실기: 피해자 명의 통장이 일반 계좌로 빠지고 "안전계좌"가 지도에서 밀려남)
+        const flat = text.replace(/\s+/g, '');
+        const mine = e.type === 'account' && u.speaker === 'other' && !/안전/.test(e.value) && (Boolean(this.state.entities['account:me']?.sources.some((x) => x.utteranceId === id)) || /(본인|고객님)명의/.test(flat) || (this.addressee && new RegExp(`${this.addressee.slice(0, 1)}[가-힣]{0,3}(씨|님)명의`).test(flat))) && /(통장|계좌)/.test(e.value) && !/안전/.test(e.value);
+        const key = mine ? 'account:me' : viaL0?.key ?? (e.type === 'person' ? entityKey('person', e.name ?? e.value.split(/\s/)[0] ?? e.value) : entityKey(e.type, e.value));
         const cur = this.state.entities[key];
         if (formatted && !cur) return;
         if (cur) {
           // 형식이 정해진 값은 L0가 이긴다 → 값은 그대로, 확인만
           if (cur.certainty === 'provisional') this.upsertEntity({ ...cur, certainty: e.certainty ?? 'claimed', origin: [...new Set([...cur.origin, 'L1' as const])] });
         } else {
-          this.upsertEntity({ key, type: e.type as Entity['type'], value: viaL0?.value ?? e.value, attrs: { ...viaL0?.attrs, ...(e.name ? { name: e.name } : {}) }, certainty: e.certainty ?? 'claimed', confidence: 0.8, origin: ['L1'], sources: [src] });
+          this.upsertEntity({ key, type: e.type as Entity['type'], value: mine ? (viaL0?.value ?? e.value).replace(/^.*명의\s*(의|로 된)?\s*/, '') || '내 명의 계좌' : viaL0?.value ?? e.value, attrs: { ...viaL0?.attrs, ...(e.name ? { name: e.name } : {}), ...(mine ? { owner: 'me' } : {}) }, certainty: e.certainty ?? 'claimed', confidence: 0.8, origin: ['L1'], sources: [src] });
           if (this.authorityUtts.has(id)) this.markAuthority(id);
         }
         this.afterChange();
@@ -984,9 +1017,12 @@ export class CallSession {
     }
     // 계좌 언급이 없는 사기(앱 설치 등)에서도 요구가 가리킬 "나" 카드를 둔다
     const slotMe = tpl.slots.me_account!;
-    const hasAccount = Boolean(this.state.boards[CASE_MAP]!.els['card:account:me']);
+    const meCard = Object.values(this.state.boards[CASE_MAP]!.els).find((el) => el.kind === 'card' && el.slot === 'me_account');
+    const hasAccount = Boolean(meCard);
     if (first.size && !hasAccount) put({ kind: 'card', id: 'card:me', zone: 'slot', label: '나', value: '전화를 받은 나', pills: [], style: 'me', sources: [] }, { x: slotMe.x, y: slotMe.y, w: slotMe.w, h: slotMe.h });
-    const accId = hasAccount ? 'card:account:me' : 'card:me';
+    // 내 계좌 카드가 나중에 생기면 자리를 비켜 준다 (같은 칸에 두 장이 겹치지 않게)
+    if (meCard && this.state.boards[CASE_MAP]!.els['card:me']) this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { remove: { id: 'card:me' } }, atMs: this.now() });
+    const accId = meCard?.id ?? 'card:me';
     // 근거가 사라진 요구 카드(발언 고치기·화자 바꾸기)는 지운다. 사용자가 바로잡은 것이라 그대로 두면 틀린 그림이다
     for (const id of Object.keys(this.state.boards[CASE_MAP]!.els).filter((k) => k.startsWith('demand:'))) {
       if (!first.has(id.slice(7) as SignalCategory)) {
@@ -1013,7 +1049,7 @@ export class CallSession {
     // 위험 신호가 없는 통화에서는 경고성 메모를 지도에 올리지 않는다 (실기: 진짜 검사 통화에 "검찰은 전화로 출석을 요구하지 않습니다")
     if (this.state.risk.level === 'none') return;
     const safe = soften(text);
-    if (!safe) return;
+    if (!safe || unknownChannel(safe)) return;
     const el: BoardEl = { kind: 'hand', id: 'hand:agent', zone: 'agent', text: safe.length > 44 ? `${safe.slice(0, 42)}…` : safe, sources: [] };
     const now = this.now();
     if (!b.els[el.id]) this.emit({ op: 'board.patch', boardId: CASE_MAP, patch: { add: { els: [el], placed: [{ id: el.id, ...tpl.zones.agent! }] } }, atMs: now });

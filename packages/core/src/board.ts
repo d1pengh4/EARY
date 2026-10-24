@@ -10,7 +10,7 @@ export function createBoard(tpl: BoardTemplate, id: string, nowMs: Ms): Board {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  org: '기관', person: '인물', case: '사건', account: '나', amount: '금액', date: '일정',
+  org: '기관', person: '인물', case: '사건', account: '계좌', amount: '금액', date: '일정',
   duration: '기간', condition: '조건', demand: '요구', product: '상품',
 };
 const TYPE_ORDER = ['org', 'person', 'product', 'amount', 'duration', 'date', 'condition', 'demand', 'case', 'account'];
@@ -67,6 +67,8 @@ export function syncEntity(board: Board, tpl: BoardTemplate, e: Entity, nowMs: M
   const taken = new Set(Object.values(board.els).map((el) => (el.kind === 'card' ? el.slot : undefined)).filter(Boolean));
   for (const [slotName, slot] of Object.entries(tpl.slots)) {
     if (slot.match.type !== e.type || taken.has(slotName)) continue;
+    // "나" 칸은 내 명의 계좌만 (실기: 상대가 말한 "안전계좌"가 "나" 칸에 들어가 "전화를 받은 나" 카드와 겹쳤다)
+    if (slot.style === 'me' && e.attrs.owner !== 'me') continue;
     const el = cardFor(e, 'slot', slotName, slot.label, slot.style);
     const placed: Placed = { id, x: slot.x, y: slot.y, w: slot.w, h: slot.h };
     const patches: BoardPatch[] = [{ add: { els: [el], placed: [placed] } }];
@@ -80,6 +82,8 @@ export function syncEntity(board: Board, tpl: BoardTemplate, e: Entity, nowMs: M
   const zone = tpl.zones[zoneName]!;
   if (zone.types && !zone.types.includes(e.type)) return [];
   const used = Object.values(board.els).filter((el) => el.zone === zoneName).length;
+  // 넘침 구역은 정해진 높이 안에서만 쌓는다 (facts 격자는 보드를 늘려 가며 쌓음)
+  if (zoneName === 'overflow' && zone.cell && Math.ceil((used + 1) / (zone.cols ?? 1)) * (zone.cell.h + (zone.gap ?? 16)) - (zone.gap ?? 16) > zone.h) return [];
   const cell = gridCell(zone, used);
   const el = cardFor(e, zoneName, undefined, TYPE_LABEL[e.type] ?? e.type);
   const placed: Placed = { id, ...cell };

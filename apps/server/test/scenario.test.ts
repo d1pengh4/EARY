@@ -266,3 +266,27 @@ describe('발언 고치기로 사건번호를 바로잡으면 지도도 바뀐�
     expect(b.placed['card:case:2026형제48271']).toMatchObject({ x: 352, y: 194 });
   });
 });
+
+describe('prosecutor-02 발표 시연 대본 (결정론)', () => {
+  test('주의(겁주기) → 누적(사건번호) → 최종(송금·인증번호), 단계별 신호와 지도', async () => {
+    const sc = SCENARIOS['prosecutor-02']!;
+    const h = harness();
+    await runSteps(sc, h, (n) => {
+      const step = sc.steps.find((s) => s.step === n)!;
+      if (step.expect?.risk) expect(`${n}:${h.session.state.risk.level}`).toBe(`${n}:${step.expect.risk}`);
+      for (const k of step.expect?.entities ?? []) expect(h.session.state.entities[k]?.certainty).not.toBe('provisional');
+      for (const c of step.expect?.signals ?? []) expect(`${n}:${h.session.state.risk.activeCategories.join(',')}`).toContain(c);
+    });
+    const s = h.session.state;
+    expect(s.risk.history.map((x) => x.level)).toEqual(['caution', 'accumulating', 'final']);
+    const board = s.boards['board:impersonation.entityMap']!;
+    expect(board.els['demand:money_transfer']).toBeDefined();
+    expect(board.els['demand:credential_request']).toBeDefined();
+    // 통화를 받은 나(최지은)는 상대 쪽 인물 카드가 아니다
+    expect(Object.values(s.entities).filter((e) => e.type === 'person').map((e) => e.value).join()).not.toContain('최지은');
+    // 지도 카드끼리 겹치지 않는다
+    const rects = Object.entries(board.placed).filter(([id]) => board.els[id]?.kind === 'card').map(([, r]) => r);
+    for (const a of rects) for (const b of rects) if (a !== b) expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false);
+    h.session.dispose();
+  }, 30000);
+});

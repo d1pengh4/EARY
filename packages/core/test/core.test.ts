@@ -241,3 +241,23 @@ test('단정 표현 누그러뜨리기 (실측: "보이스피싱입니다! 즉�
   expect(soften('이건 사기입니다.')).toBe('이건 사기가 의심돼요.');
   expect(soften('공식 대표번호로 직접 확인하세요')).toBe('공식 대표번호로 직접 확인하세요');
 });
+
+describe('없는 신고처 거르기 (실기: "112나 찐센터로 신고하세요")', () => {
+  test('지어낸 센터는 막고, 확인된 신고처는 통과', async () => {
+    const { unknownChannel } = await import('../src/safety');
+    expect(unknownChannel('즉시 끊고 112나 찐센터로 신고하세요')).toBe(true);
+    expect(unknownChannel('112나 금융감독원 1332로 신고하세요')).toBe(false);
+    expect(unknownChannel('보이스피싱 통합신고센터에 신고하세요')).toBe(false);
+  });
+});
+
+test('사건번호 STT 오인식 "2026 현재 4만 8271호" → 2026형제48271호 (실기)', async () => {
+  const { join } = await import('node:path');
+  const { createL0 } = await import('../src/l0');
+  const { loadPacks } = await import('../src/load');
+  const packs = loadPacks(join(import.meta.dir, '../../../data'));
+  const l0 = createL0(packs.lexicon, Object.values(packs.domains));
+  const r = l0.scan('사건번호는 2026 현재 4만 8271호이고 지금부터 통화 내용은 녹취됩니다');
+  expect(r.entities.find((e) => e.type === 'case')?.value).toBe('2026형제48271호');
+  expect(l0.scan('현재 3만 원 남았어요').entities.find((e) => e.type === 'case')).toBeUndefined();
+});

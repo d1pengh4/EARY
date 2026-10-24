@@ -21,6 +21,9 @@ export const SIGNAL_QUESTIONS: Partial<Record<SignalCategory, string>> = {
   money_transfer: 'last 발화에서 상대가 송금이나 계좌 이체를 요구하는가? (context는 참고만)',
   credential_request: 'last 발화에서 상대가 인증번호·비밀번호 등 인증정보를 요구하는가? (context는 참고만)',
   remote_app: 'last 발화에서 상대가 앱 설치나 원격 제어를 요구하는가? (context는 참고만)',
+  // 실기: 이 두 질문이 없어서 규칙이 잡은 기관 사칭·고립 신호가 Jev 경로에서 끝내 확정되지 않았다
+  impersonation: 'last 발화에서 상대가 사용자 명의·계좌가 범죄나 사건에 연루됐다고 하거나, 녹취·압수·출석 같은 수사 절차를 들어 겁을 주는가? (context는 참고만)',
+  isolation: 'last 발화에서 상대가 사용자를 혼자 있게 하거나, 조용한 곳으로 옮기게 하거나, 통화를 끊지 못하게 하는가? (context는 참고만)',
 };
 export const AUTHORITY_QUESTION = 'last 발화에서 상대가 수사기관·금융기관 등 공공기관 소속이라고 주장하는가?';
 

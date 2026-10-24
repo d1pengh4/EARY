@@ -4,3 +4,7 @@
 node_modules/
 dist/
 data/eary.db*
+
+# 녹화 영상 (용량이 크고 공개 레포에 올리지 않음)
+*.mov
+*.mp4
